@@ -17,6 +17,7 @@ export class GrvtExchangeService implements OnModuleInit {
 
   onModuleInit() {
     const env = this.config.get<string>('GRVT_ENV') ?? 'testnet';
+    // apiKey = GRVT API key (session auth), secret = ETH private key (EIP-712 order signing)
     const apiKey = this.config.getOrThrow<string>('GRVT_API_KEY');
     const privateKey = this.config.getOrThrow<string>('GRVT_PRIVATE_KEY');
     const subAccountId = this.config.getOrThrow<string>('GRVT_SUB_ACCOUNT_ID');
@@ -26,10 +27,18 @@ export class GrvtExchangeService implements OnModuleInit {
       apiKey,
       secret: privateKey,
       options: {
-        subAccountId,
-        network: env === 'prod' ? 'mainnet' : 'testnet',
+        accountId: subAccountId,
+        defaultType: 'swap',
       },
     });
+
+    if (env !== 'prod') {
+      this.exchange.setSandboxMode(true);
+    }
+
+    // CCXT grvt quirk: requiredCredentials marks privateKey as required, but when
+    // using apiKey auth the private key goes in `secret` for EIP-712 order signing.
+    this.exchange.requiredCredentials.privateKey = false;
 
     this.logger.log(`GRVT CCXT exchange initialized (${env})`);
   }

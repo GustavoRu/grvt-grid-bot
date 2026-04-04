@@ -37,15 +37,25 @@ async function main() {
 
   // ─── 2. Initialize CCXT exchange ─────────────────────────
   console.log('\n📡 Initializing CCXT grvt exchange (testnet)…');
+  const env = process.env['GRVT_ENV'] ?? 'testnet';
+  // CCXT grvt: apiKey = GRVT API key (for session auth), secret = ETH private key (for EIP-712 order signing)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const exchange = new (ccxt as any).grvt({
     apiKey: process.env['GRVT_API_KEY'] as string,
     secret: process.env['GRVT_PRIVATE_KEY'] as string,
     options: {
-      subAccountId: process.env['GRVT_SUB_ACCOUNT_ID'],
-      network: 'testnet',
+      accountId: process.env['GRVT_SUB_ACCOUNT_ID'],
+      defaultType: 'swap',
     },
   });
+
+  if (env === 'testnet') {
+    exchange.setSandboxMode(true);
+  }
+
+  // CCXT grvt quirk: requiredCredentials marks privateKey as required, but when using
+  // apiKey auth the private key goes in `secret` for EIP-712 signing. Override the check.
+  exchange.requiredCredentials.privateKey = false;
 
   // ─── 3. Load markets ─────────────────────────────────────
   console.log('🔍 Loading markets…');

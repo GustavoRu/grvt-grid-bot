@@ -49,7 +49,11 @@ Crear un bot de grid trading (futures) que opere sobre GRVT (grvt.io) via API, r
 - [x] `prisma migrate dev --name init` ejecutado — tablas creadas en Supabase
 - [x] TypeScript compila sin errores en todos los workspaces
 
-**Siguiente paso → `pnpm test:grvt`**
+**`pnpm test:grvt` ✅ PASÓ** — 113 mercados, BTC price $67,274, grid levels calculados correctamente
+
+**Pendiente antes de Fase 1:**
+- [ ] Mintear USDT testnet en https://testnet.grvt.io → Faucet → transferir a Trading Account
+- [ ] `PLACE_ORDER=true pnpm test:grvt` para verificar placement de órdenes
 
 **Entregable:** Bot se conecta a GRVT testnet, consulta precio, coloca una orden de prueba.
 
