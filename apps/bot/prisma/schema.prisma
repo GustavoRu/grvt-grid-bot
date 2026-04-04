@@ -1,0 +1,88 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Grid {
+  id               String      @id @default(cuid())
+  instrument       String      // "BTC_USDT_Perp"
+  upperPrice       Float
+  lowerPrice       Float
+  gridCount        Int
+  gridType         String      @default("arithmetic")  // arithmetic | geometric
+  leverage         Int
+  investmentAmount Float
+  stopLoss         Float?
+  takeProfit       Float?
+  status           String      @default("pending")     // pending | active | stopped | error | completed
+  currentPrice     Float?
+  realizedPnl      Float       @default(0)
+  unrealizedPnl    Float       @default(0)
+  totalVolume      Float       @default(0)
+  tradeCount       Int         @default(0)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  stoppedAt        DateTime?
+
+  orders           GridOrder[]
+  trades           GridTrade[]
+  pnlSnapshots     PnlSnapshot[]
+
+  @@index([status])
+  @@index([instrument])
+}
+
+model GridOrder {
+  id           String    @id @default(cuid())
+  gridId       String
+  grid         Grid      @relation(fields: [gridId], references: [id], onDelete: Cascade)
+  gridLevel    Int
+  side         String    // buy | sell
+  price        Float
+  size         Float
+  filledPrice  Float?
+  status       String    @default("pending")  // pending | open | filled | cancelled | error
+  grvtOrderId  String?   @unique
+  filledAt     DateTime?
+  createdAt    DateTime  @default(now())
+
+  buyTrades    GridTrade[] @relation("BuyOrder")
+  sellTrades   GridTrade[] @relation("SellOrder")
+
+  @@index([gridId, status])
+  @@index([grvtOrderId])
+}
+
+model GridTrade {
+  id          String    @id @default(cuid())
+  gridId      String
+  grid        Grid      @relation(fields: [gridId], references: [id], onDelete: Cascade)
+  buyOrderId  String
+  buyOrder    GridOrder @relation("BuyOrder", fields: [buyOrderId], references: [id])
+  sellOrderId String
+  sellOrder   GridOrder @relation("SellOrder", fields: [sellOrderId], references: [id])
+  buyPrice    Float
+  sellPrice   Float
+  size        Float
+  profit      Float
+  timestamp   DateTime  @default(now())
+
+  @@index([gridId])
+}
+
+model PnlSnapshot {
+  id            String   @id @default(cuid())
+  gridId        String
+  grid          Grid     @relation(fields: [gridId], references: [id], onDelete: Cascade)
+  realizedPnl   Float
+  unrealizedPnl Float
+  totalPnl      Float
+  currentPrice  Float
+  timestamp     DateTime @default(now())
+
+  @@index([gridId, timestamp])
+}

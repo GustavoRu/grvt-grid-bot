@@ -29,62 +29,76 @@ Crear un bot de grid trading (futures) que opere sobre GRVT (grvt.io) via API, r
 
 ## Fases del Proyecto
 
-### FASE 0 — Setup & Fundamentos ← ACTUAL
-**Estado: 🟡 En progreso**
-**Objetivo:** Tener el proyecto scaffolded, conectado a GRVT testnet, y poder hacer operaciones básicas.
+### FASE 0 — Setup & Fundamentos
+**Estado: 🟢 Completada (scaffolding)**
+**Pendiente del usuario:** Crear API key en GRVT testnet + Supabase DB
 
-- [ ] Crear cuenta GRVT testnet + API key (método "Generar")
-- [ ] Mintear tokens de prueba en testnet
-- [ ] Transferir fondos a Trading Account
-- [ ] Scaffolding monorepo (Turborepo + pnpm)
-- [ ] Setup apps/bot (NestJS) con módulo de auth GRVT
-- [ ] Setup apps/dashboard (Next.js 14) base
-- [ ] Setup packages/shared (tipos)
-- [ ] Test de conexión: autenticar → obtener ticker BTC_USDT_Perp → colocar orden limit
-- [ ] Crear `.env.example` con todas las variables necesarias
-- [ ] Setup base de datos (schema Prisma) en Supabase
-- [ ] Commit inicial + push a GitHub
+**Completado por Claude Code:**
+- [x] Scaffolding monorepo (Turborepo + pnpm)
+- [x] Setup apps/bot (NestJS) con todos los módulos
+- [x] Setup apps/dashboard (Next.js 14) base con shadcn/ui
+- [x] Setup packages/shared (tipos e interfaces)
+- [x] Prisma schema con Grid, GridOrder, GridTrade, PnlSnapshot
+- [x] GridCalculator (arithmetic + geometric spacing)
+- [x] GrvtAuthModule (session cookie + auto-refresh)
+- [x] GrvtExchangeService (CCXT wrapper)
+- [x] MarketDataModule (WebSocket con reconexión)
+- [x] Script de test de conexión: `pnpm test:grvt`
+- [x] Commit inicial + push a GitHub (GustavoRu/grvt-grid-bot)
+- [x] TypeScript compila sin errores en todos los workspaces
+
+**Pendiente para arrancar:**
+- [ ] Gustavo: crear cuenta GRVT testnet + generar API key
+- [ ] Gustavo: mintear tokens de prueba en testnet faucet
+- [ ] Gustavo: crear proyecto Supabase + copiar DATABASE_URL
+- [ ] Gustavo: copiar `.env.example` → `.env` y completar variables
+- [ ] Ejecutar `pnpm --filter bot exec prisma generate` (genera el Prisma client)
+- [ ] Ejecutar `pnpm --filter bot exec prisma migrate dev --name init` (crea las tablas)
+- [ ] Ejecutar `pnpm test:grvt` (verifica conexión con testnet)
 
 **Entregable:** Bot se conecta a GRVT testnet, consulta precio, coloca una orden de prueba.
 
 ---
 
 ### FASE 1 — Grid Engine MVP
-**Estado: ⬜ Pendiente**
+**Estado: 🟡 Parcialmente implementado**
 **Objetivo:** Grid bot funcional con una grilla arithmetic en un solo par.
 
-- [ ] Lógica de cálculo de grid levels (arithmetic spacing)
-- [ ] Módulo de colocación de órdenes: N buy limits abajo del precio, N sell limits arriba
-- [ ] Listener de fills (via WebSocket o polling)
-- [ ] Rebalanceo: buy fill → colocar sell un nivel arriba, y viceversa
-- [ ] Tracking de posición neta y PnL
-- [ ] Manejo de leverage (setear en la cuenta de GRVT)
-- [ ] Safety: stop loss si el precio sale del rango
-- [ ] Persistencia en DB: grilla activa, órdenes, trades
-- [ ] Logging estructurado de toda la actividad
+**Ya implementado:**
+- [x] Lógica de cálculo de grid levels (arithmetic + geometric)
+- [x] Módulo de colocación de órdenes iniciales
+- [x] Polling de fills + rebalanceo automático
+- [x] Tracking de PnL realizado + snapshots
+- [x] Safety: stop loss y take profit por precio
+
+**Pendiente Fase 1:**
+- [ ] Listener WebSocket de fills (reemplazar polling)
+- [ ] Manejo de leverage (setLeverage en GRVT)
+- [ ] Logging estructurado más detallado
+- [ ] Test de integración completo en testnet
 
 **Entregable:** Bot corre una grilla completa en testnet, genera trades, trackea PnL.
-
-📸 *En esta fase pedir capturas de Pionex: formulario de creación de grid futures, vista de grilla activa.*
 
 ---
 
 ### FASE 2 — Dashboard MVP
-**Estado: ⬜ Pendiente**
+**Estado: 🟡 Base implementada**
 **Objetivo:** Dashboard web para crear, monitorear y detener grillas.
 
-- [ ] Página Home: resumen de grillas activas, PnL total, volumen generado
-- [ ] Página Grids: lista de grillas, botón "Nueva Grilla"
-- [ ] Formulario de creación: par, rango de precio, cantidad de grids, leverage, monto
-- [ ] Página de detalle de grilla: gráfico con niveles, órdenes, PnL
-- [ ] Start/Stop de grillas desde el dashboard
-- [ ] Tabla de historial de trades
-- [ ] API routes que leen de la misma DB que el bot
-- [ ] Auth básica (password simple o Supabase auth)
+**Ya implementado:**
+- [x] Layout + sidebar de navegación
+- [x] Página Home con summary cards
+- [x] Página Grids: lista con acciones
+- [x] Formulario "Nueva Grilla" (modal)
+- [x] React Query con polling cada 5s
 
-**Entregable:** Dashboard funcional que permite crear y monitorear grillas.
-
-📸 *En esta fase pedir capturas de Pionex: dashboard principal, detalle de bot activo, historial de PnL.*
+**Pendiente Fase 2:**
+- [ ] Página detalle `/grids/[id]`
+- [ ] Gráfico con niveles de la grilla
+- [ ] PnL chart con Recharts
+- [ ] Tabla de órdenes y trades
+- [ ] API routes en Next.js (actualmente habla directo al bot)
+- [ ] Auth básica
 
 ---
 
@@ -92,7 +106,6 @@ Crear un bot de grid trading (futures) que opere sobre GRVT (grvt.io) via API, r
 **Estado: ⬜ Pendiente**
 **Objetivo:** Robustez y features avanzados.
 
-- [ ] Grid geométrico (spacing proporcional)
 - [ ] Múltiples grillas simultáneas
 - [ ] Reconexión automática de WebSocket
 - [ ] Manejo de errores robusto (reintentos, circuit breaker)
@@ -101,9 +114,6 @@ Crear un bot de grid trading (futures) que opere sobre GRVT (grvt.io) via API, r
 - [ ] Take profit automático
 - [ ] Deploy bot en Railway
 - [ ] Deploy dashboard en Vercel
-- [ ] Variables de entorno en producción
-
-**Entregable:** Bot corriendo en producción sobre GRVT mainnet.
 
 ---
 
@@ -117,20 +127,73 @@ Crear un bot de grid trading (futures) que opere sobre GRVT (grvt.io) via API, r
 
 ---
 
+## Estructura del Monorepo
+
+```
+grvt-grid-bot/
+├── apps/
+│   ├── bot/                     # NestJS service
+│   │   ├── src/
+│   │   │   ├── auth/            # GrvtAuthModule (session cookie)
+│   │   │   ├── grid-engine/     # GridEngineModule + GrvtExchangeService
+│   │   │   ├── market-data/     # WebSocket market data
+│   │   │   ├── database/        # PrismaService
+│   │   │   └── scripts/         # test-grvt-connection.ts
+│   │   └── prisma/
+│   │       └── schema.prisma    # Grid, GridOrder, GridTrade, PnlSnapshot
+│   └── dashboard/               # Next.js 14 App Router
+│       └── src/
+│           ├── app/             # Pages: /, /grids, /settings
+│           ├── components/      # dashboard, grids, layout
+│           └── lib/             # api.ts, utils.ts
+└── packages/
+    └── shared/                  # Tipos compartidos: GridConfig, Grid, etc.
+```
+
+---
+
+## Comandos Rápidos
+
+```bash
+# Setup inicial (una sola vez)
+pnpm install
+pnpm --filter bot exec prisma generate
+pnpm --filter bot exec prisma migrate dev --name init
+
+# Test de conexión GRVT testnet
+pnpm --filter bot run test:grvt
+
+# Test con colocación de orden real
+PLACE_ORDER=true pnpm --filter bot run test:grvt
+
+# Desarrollo
+pnpm bot          # Solo bot (NestJS en :3001)
+pnpm dashboard    # Solo dashboard (Next.js en :3000)
+pnpm dev          # Ambos en paralelo
+
+# Build
+pnpm build
+```
+
+---
+
 ## Variables de Entorno Requeridas
 
 ```env
 # GRVT
-GRVT_API_KEY=
-GRVT_PRIVATE_KEY=          # Private key del signer (para EIP-712)
-GRVT_SUB_ACCOUNT_ID=
-GRVT_ENV=testnet            # testnet | prod
+GRVT_API_KEY=                    # API key generada en GRVT (opción "Generar")
+GRVT_PRIVATE_KEY=                # Private key del signer Ethereum (para EIP-712)
+GRVT_SUB_ACCOUNT_ID=             # Sub-account ID de GRVT
+GRVT_ENV=testnet                 # testnet | prod
 
 # Database
-DATABASE_URL=               # Supabase PostgreSQL connection string
+DATABASE_URL=                    # Supabase PostgreSQL connection string
+
+# Bot
+BOT_PORT=3001
 
 # Dashboard
-NEXT_PUBLIC_API_URL=        # URL del bot engine API (para el dashboard)
+NEXT_PUBLIC_API_URL=http://localhost:3001
 ```
 
 ---
@@ -150,8 +213,6 @@ NEXT_PUBLIC_API_URL=        # URL del bot engine API (para el dashboard)
 | WebSocket Market Data | `wss://market-data.{env}.grvt.io/ws/full` | WS |
 | WebSocket Trading | `wss://trades.{env}.grvt.io/ws/full` | WS |
 
-**Nota:** `{env}` = vacío para prod, `testnet` para testnet. Ej: `edge.testnet.grvt.io` vs `edge.grvt.io`
-
 ---
 
 ## Notas de Sesión
@@ -163,9 +224,25 @@ NEXT_PUBLIC_API_URL=        # URL del bot engine API (para el dashboard)
 - Decidimos usar CCXT como capa de abstracción principal
 - Arquitectura: NestJS (bot) + Next.js (dashboard) + Supabase (DB) en monorepo Turborepo
 - Hosting: Railway ($5/mes con crédito) para bot, Vercel gratis para dashboard
-- Railway tiene trial de 30 días con $5 de crédito sin tarjeta
-- Gustavo debe crear API key en GRVT testnet (opción "Generar")
-- Próximo paso: Gustavo crea API key → arrancamos Fase 0 con Claude Code
+
+### 2026-04-04 — Sesión 2: Scaffolding completo (Claude Code)
+- Monorepo Turborepo completo con pnpm workspaces
+- `packages/shared`: tipos GridConfig, Grid, GridOrder, GridTrade, PnlSnapshot, GrvtTicker, etc.
+- `apps/bot`: NestJS con GrvtAuthModule, GridEngineModule, MarketDataModule, DatabaseModule
+  - GridCalculator: arithmetic + geometric spacing, split por precio actual
+  - GrvtExchangeService: wrapper CCXT completo (orders, positions, balance)
+  - MarketDataService: WebSocket con reconexión exponencial backoff
+  - GrvtAuthService: auth con session cookie + auto-refresh
+  - PrismaService + schema completo
+- `apps/dashboard`: Next.js 14 con Tailwind dark theme
+  - Home page: summary cards + tabla de grillas activas
+  - Grids page: lista + form de nueva grilla (modal)
+  - React Query polling cada 5s
+- Script `test-grvt-connection.ts`: verifica auth, ticker, grid levels, balance
+- TypeScript compila ✅ en todos los workspaces
+- Repo en GitHub: GustavoRu/grvt-grid-bot
+
+**Próximo paso:** Gustavo crea API key en GRVT testnet → `cp .env.example .env` → `pnpm test:grvt`
 
 ---
 
