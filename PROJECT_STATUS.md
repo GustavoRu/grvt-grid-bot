@@ -30,10 +30,9 @@ Crear un bot de grid trading (futures) que opere sobre GRVT (grvt.io) via API, r
 ## Fases del Proyecto
 
 ### FASE 0 — Setup & Fundamentos
-**Estado: 🟢 Completada (scaffolding)**
-**Pendiente del usuario:** Crear API key en GRVT testnet + Supabase DB
+**Estado: ✅ Completada**
 
-**Completado por Claude Code:**
+**Completado:**
 - [x] Scaffolding monorepo (Turborepo + pnpm)
 - [x] Setup apps/bot (NestJS) con todos los módulos
 - [x] Setup apps/dashboard (Next.js 14) base con shadcn/ui
@@ -44,17 +43,13 @@ Crear un bot de grid trading (futures) que opere sobre GRVT (grvt.io) via API, r
 - [x] GrvtExchangeService (CCXT wrapper)
 - [x] MarketDataModule (WebSocket con reconexión)
 - [x] Script de test de conexión: `pnpm test:grvt`
-- [x] Commit inicial + push a GitHub (GustavoRu/grvt-grid-bot)
+- [x] API key GRVT testnet configurada (TradingAccount1, sub-account: 7475784914520631)
+- [x] Supabase DB creada (grvt-grid-bot, us-east-1, pooler configurado)
+- [x] `apps/bot/.env` como symlink al `.env` raíz (un solo archivo de config)
+- [x] `prisma migrate dev --name init` ejecutado — tablas creadas en Supabase
 - [x] TypeScript compila sin errores en todos los workspaces
 
-**Pendiente para arrancar:**
-- [ ] Gustavo: crear cuenta GRVT testnet + generar API key
-- [ ] Gustavo: mintear tokens de prueba en testnet faucet
-- [ ] Gustavo: crear proyecto Supabase + copiar DATABASE_URL
-- [ ] Gustavo: copiar `.env.example` → `.env` y completar variables
-- [ ] Ejecutar `pnpm --filter bot exec prisma generate` (genera el Prisma client)
-- [ ] Ejecutar `pnpm --filter bot exec prisma migrate dev --name init` (crea las tablas)
-- [ ] Ejecutar `pnpm test:grvt` (verifica conexión con testnet)
+**Siguiente paso → `pnpm test:grvt`**
 
 **Entregable:** Bot se conecta a GRVT testnet, consulta precio, coloca una orden de prueba.
 
