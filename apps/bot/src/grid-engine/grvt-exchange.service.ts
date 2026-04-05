@@ -72,12 +72,15 @@ export class GrvtExchangeService implements OnModuleInit {
     };
   }
 
-  /** Get minimum order size for an instrument */
-  async getMinOrderSize(instrument: string): Promise<number> {
+  /** Get exchange constraints for an instrument */
+  async getMarketLimits(instrument: string): Promise<{ minAmount: number; minNotional: number }> {
     const markets = await this.exchange.loadMarkets();
     const symbol = this.toSymbol(instrument);
     const market = markets[symbol];
-    return (market?.limits?.amount?.min as number | undefined) ?? 0;
+    return {
+      minAmount: (market?.limits?.amount?.min as number | undefined) ?? 0,
+      minNotional: (market?.limits?.cost?.min as number | undefined) ?? 0,
+    };
   }
 
   /** Place a limit order */

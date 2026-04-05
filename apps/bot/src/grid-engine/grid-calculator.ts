@@ -6,9 +6,10 @@ export class GridCalculator {
    * Returns an array of levels from bottom (index 0) to top (index gridCount).
    * The grid has gridCount+1 price points but gridCount intervals.
    *
-   * @param minOrderSize - exchange minimum order size (e.g. 0.001 for BTC on GRVT)
+   * @param minAmount   - exchange min order size in base asset (e.g. 0.001 ETH)
+   * @param minNotional - exchange min order value in quote (e.g. $20 on GRVT)
    */
-  static calculateLevels(config: GridConfig, minOrderSize = 0): GridLevel[] {
+  static calculateLevels(config: GridConfig, minAmount = 0, minNotional = 0): GridLevel[] {
     const { upperPrice, lowerPrice, gridCount, gridType, investmentAmount, leverage } = config;
 
     if (upperPrice <= lowerPrice) throw new Error('upperPrice must be greater than lowerPrice');
@@ -24,9 +25,11 @@ export class GridCalculator {
 
     return prices.map((price, index) => {
       const rawSize = capitalPerGrid / price;
-      // Clamp to exchange minimum — if investment is small, orders are rounded up to min size
-      const orderSize = minOrderSize > 0
-        ? Math.max(this.roundSize(rawSize), minOrderSize)
+      // Clamp to largest of: calculated size, min amount, min notional / price
+      const minByNotional = minNotional > 0 ? minNotional / price : 0;
+      const effectiveMin = Math.max(minAmount, minByNotional);
+      const orderSize = effectiveMin > 0
+        ? Math.max(this.roundSize(rawSize), this.roundSize(effectiveMin))
         : this.roundSize(rawSize);
       return { index, price: this.roundPrice(price), orderSize };
     });

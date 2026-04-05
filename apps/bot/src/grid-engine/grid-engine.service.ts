@@ -105,9 +105,9 @@ export class GridEngineService {
       // Subscribe to market data
       this.marketData.subscribe(config.instrument);
 
-      // Calculate grid levels — fetch exchange min order size to clamp small orders
-      const minOrderSize = await this.exchange.getMinOrderSize(config.instrument);
-      const levels = GridCalculator.calculateLevels(config, minOrderSize);
+      // Calculate grid levels — fetch exchange limits to clamp by amount AND notional
+      const { minAmount, minNotional } = await this.exchange.getMarketLimits(config.instrument);
+      const levels = GridCalculator.calculateLevels(config, minAmount, minNotional);
       const { buyLevels, sellLevels } = GridCalculator.splitLevelsByPrice(levels, currentPrice);
 
       this.logger.log(

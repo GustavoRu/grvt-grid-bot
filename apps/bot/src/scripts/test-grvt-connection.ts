@@ -92,11 +92,13 @@ async function main() {
   const GRID_COUNT = 10;
   const INVESTMENT_USDT = 100; // user-defined — any amount is valid
 
-  // Fetch minimum order size from market info (exchange constraint, not investment constraint)
+  // Fetch exchange limits from market info
   const markets = exchange.markets ?? {};
   const marketInfo = markets['BTC/USDT:USDT'];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const minOrderSize: number = (marketInfo as any)?.limits?.amount?.min ?? 0.001;
+  const mi = marketInfo as any;
+  const minOrderSize: number = mi?.limits?.amount?.min ?? 0.001;
+  const minNotional: number = mi?.limits?.cost?.min ?? 0;
 
   const config = {
     instrument: INSTRUMENT,
@@ -109,14 +111,16 @@ async function main() {
     investmentAmount: INVESTMENT_USDT,
   };
 
-  console.log(`   Exchange min order size: ${minOrderSize} BTC (orders clamped up if needed)`);
+  console.log(`   Exchange min order size: ${minOrderSize} BTC, min notional: $${minNotional}`);
 
-  const levels = GridCalculator.calculateLevels(config, minOrderSize);
+  const levels = GridCalculator.calculateLevels(config, minOrderSize, minNotional);
 
-  // Warn if orders were clamped to minimum size
+  // Warn if orders were clamped
   const rawSize = (INVESTMENT_USDT * 2) / GRID_COUNT / currentPrice;
-  if (rawSize < minOrderSize) {
-    console.log(`   ⚠️  Calculated size (${rawSize.toFixed(6)}) < min (${minOrderSize}) → orders clamped to ${minOrderSize} BTC`);
+  const minByNotional = minNotional > 0 ? minNotional / currentPrice : 0;
+  const effectiveMin = Math.max(minOrderSize, minByNotional);
+  if (rawSize < effectiveMin) {
+    console.log(`   ⚠️  Calculated size (${rawSize.toFixed(6)}) < effective min (${effectiveMin.toFixed(6)}) → orders clamped`);
   }
   const { buyLevels, sellLevels } = GridCalculator.splitLevelsByPrice(levels, currentPrice);
   const profitPerGrid = GridCalculator.calculateGridProfit(config);
