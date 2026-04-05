@@ -81,7 +81,7 @@ export class GridEngineService {
   private async pruneStaleOrders(): Promise<void> {
     const result = await this.prisma.gridOrder.deleteMany({
       where: {
-        status: { in: ['pending', 'open'] },
+        status: { in: ['pending', 'open', 'error'] },
         grid: { status: { in: ['error', 'stopped', 'completed'] } },
       },
     });
@@ -257,9 +257,10 @@ export class GridEngineService {
         const openOrders: any[] = await this.exchange.getOpenOrders(active.grid.instrument);
         const openOrderIds = new Set(openOrders.map((o) => o.id as string));
 
-        // Find DB orders that are no longer open on exchange → they filled or were cancelled
+        // Find DB orders confirmed open (with real IDs) → check if they filled or were cancelled
+        // 'pending' orders are still being reconciled — don't poll them yet
         const dbOpenOrders = await this.prisma.gridOrder.findMany({
-          where: { gridId, status: 'open' },
+          where: { gridId, status: 'open', grvtOrderId: { not: null } },
         });
 
         for (const dbOrder of dbOpenOrders) {
@@ -296,9 +297,14 @@ export class GridEngineService {
       ...sellLevels.map((l) => ({ ...l, side: 'sell' as const })),
     ];
 
+    // Phase 1: Place all orders.
+    // GRVT returns order_id = "0x00" while the order is PENDING — the real hash
+    // is assigned asynchronously. We create DB records keyed by price+side first
+    // and reconcile with real IDs in Phase 2.
+    const pendingDbOrders: GridOrder[] = [];
     for (const level of allLevels) {
       try {
-        const response = await this.exchange.placeOrder({
+        await this.exchange.placeOrder({
           instrument: grid.instrument,
           side: level.side,
           type: 'limit',
@@ -307,36 +313,79 @@ export class GridEngineService {
           timeInForce: 'GTC',
         });
 
-        // upsert: if grvtOrderId already exists (e.g. nonce reuse after restart)
-        // update the record to point to the new grid instead of failing
-        const dbOrder = await this.prisma.gridOrder.upsert({
-          where: { grvtOrderId: response.orderId },
-          create: {
+        const dbOrder = await this.prisma.gridOrder.create({
+          data: {
             gridId: grid.id,
             gridLevel: level.index,
             side: level.side,
             price: level.price,
             size: level.orderSize,
-            status: 'open',
-            grvtOrderId: response.orderId,
-          },
-          update: {
-            gridId: grid.id,
-            gridLevel: level.index,
-            side: level.side,
-            price: level.price,
-            size: level.orderSize,
-            status: 'open',
+            status: 'pending', // upgraded to 'open' with real ID in Phase 2
+            grvtOrderId: null,
           },
         });
-
-        orderMap.set(response.orderId, dbOrder);
+        pendingDbOrders.push(dbOrder);
 
         // Small delay to respect rate limits
-        await this.sleep(100);
+        await this.sleep(150);
       } catch (err) {
         this.logger.warn(`Failed to place ${level.side} @ ${level.price}`, err);
       }
+    }
+
+    // Phase 2: Reconcile real order IDs.
+    // Wait for GRVT to move orders from PENDING → OPEN and assign real hashes.
+    await this.sleep(3000);
+    await this.reconcileOrderIds(grid, pendingDbOrders, orderMap);
+  }
+
+  /**
+   * Fetch open orders from the exchange and match them to DB records by price+side.
+   * Updates DB grvtOrderId and populates the orderMap with real IDs.
+   */
+  private async reconcileOrderIds(
+    grid: Grid,
+    pendingDbOrders: GridOrder[],
+    orderMap: Map<string, GridOrder>,
+  ): Promise<void> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const openOrders: any[] = await this.exchange.getOpenOrders(grid.instrument);
+      this.logger.log(`Reconciling: ${pendingDbOrders.length} placed, ${openOrders.length} open on exchange`);
+
+      // Index exchange orders by price+side for O(1) lookup
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const exchangeByKey = new Map<string, any>();
+      for (const o of openOrders) {
+        const key = `${o.side}@${parseFloat(o.price).toFixed(1)}`;
+        exchangeByKey.set(key, o);
+      }
+
+      for (const dbOrder of pendingDbOrders) {
+        const key = `${dbOrder.side}@${dbOrder.price.toFixed(1)}`;
+        const match = exchangeByKey.get(key);
+
+        if (match?.id && !/^0x0+$/.test(match.id)) {
+          // Found real ID — update DB and orderMap
+          await this.prisma.gridOrder.update({
+            where: { id: dbOrder.id },
+            data: { grvtOrderId: match.id, status: 'open' },
+          });
+          orderMap.set(match.id, { ...dbOrder, grvtOrderId: match.id, status: 'open' });
+          exchangeByKey.delete(key); // prevent double-matching
+        } else {
+          // Not found on exchange (GRVT cancelled it — order limit or rejection)
+          await this.prisma.gridOrder.update({
+            where: { id: dbOrder.id },
+            data: { status: 'cancelled' },
+          });
+          this.logger.debug(`Order ${dbOrder.side} @ ${dbOrder.price} not found on exchange after placement — marked cancelled`);
+        }
+      }
+
+      this.logger.log(`Reconciled: ${orderMap.size} orders active with real IDs`);
+    } catch (err) {
+      this.logger.error('Failed to reconcile order IDs', err);
     }
   }
 
