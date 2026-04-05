@@ -64,6 +64,8 @@ const MAX_OPEN_ORDERS = 20;
 export class GridEngineService {
   private readonly logger = new Logger(GridEngineService.name);
   private activeGrids = new Map<string, ActiveGrid>(); // gridId → ActiveGrid
+  // Prevents double-processing when the 10s poller fires twice for the same fill
+  private processingFills = new Set<string>(); // grvtOrderId
 
   constructor(
     private readonly prisma: PrismaService,
@@ -276,8 +278,12 @@ export class GridEngineService {
             continue;
           }
           if (!openOrderIds.has(id)) {
+            if (this.processingFills.has(id)) continue; // already being processed
+            this.processingFills.add(id);
             this.logger.debug(`Order ${id} no longer open — assuming filled`);
-            await this.onOrderFilled(id, dbOrder.price);
+            this.onOrderFilled(id, dbOrder.price)
+              .finally(() => this.processingFills.delete(id))
+              .catch((err) => this.logger.error(`Fill processing error for ${id}`, err));
           }
         }
       } catch (err) {
@@ -441,8 +447,9 @@ export class GridEngineService {
         timeInForce: 'GTC',
       });
 
-      const dbOrder = await this.prisma.gridOrder.create({
-        data: {
+      const dbOrder = await this.prisma.gridOrder.upsert({
+        where: { grvtOrderId: response.orderId },
+        create: {
           gridId: active.grid.id,
           gridLevel: counterLevel.index,
           side,
@@ -450,6 +457,14 @@ export class GridEngineService {
           size: counterLevel.orderSize,
           status: 'open',
           grvtOrderId: response.orderId,
+        },
+        update: {
+          gridId: active.grid.id,
+          gridLevel: counterLevel.index,
+          side,
+          price: counterLevel.price,
+          size: counterLevel.orderSize,
+          status: 'open',
         },
       });
 
@@ -726,8 +741,9 @@ export class GridEngineService {
         timeInForce: 'GTC',
       });
 
-      const dbOrder = await this.prisma.gridOrder.create({
-        data: {
+      const dbOrder = await this.prisma.gridOrder.upsert({
+        where: { grvtOrderId: response.orderId },
+        create: {
           gridId: active.grid.id,
           gridLevel: level.index,
           side,
@@ -735,6 +751,14 @@ export class GridEngineService {
           size: level.orderSize,
           status: 'open',
           grvtOrderId: response.orderId,
+        },
+        update: {
+          gridId: active.grid.id,
+          gridLevel: level.index,
+          side,
+          price: level.price,
+          size: level.orderSize,
+          status: 'open',
         },
       });
 
