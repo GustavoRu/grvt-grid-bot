@@ -123,6 +123,15 @@ export class GridEngineService {
 
       // Calculate grid levels — fetch exchange limits to clamp by amount AND notional
       const { minAmount, minNotional } = await this.exchange.getMarketLimits(config.instrument);
+      const capitalPerGrid = (config.investmentAmount * config.leverage) / config.gridCount;
+      if (minNotional > 0 && capitalPerGrid < minNotional) {
+        const minInvestment = Math.ceil((minNotional * config.gridCount) / config.leverage);
+        throw new Error(
+          `Investment too low: $${capitalPerGrid.toFixed(2)}/grid < $${minNotional} minimum notional. ` +
+          `Need at least $${minInvestment} with ${config.leverage}x leverage for ${config.gridCount} grids.`,
+        );
+      }
+      this.logger.log(`Capital per grid: $${capitalPerGrid.toFixed(2)} (min notional: $${minNotional})`);
       const levels = GridCalculator.calculateLevels(config, minAmount, minNotional);
       const { buyLevels, sellLevels } = GridCalculator.splitLevelsByPrice(levels, currentPrice);
 

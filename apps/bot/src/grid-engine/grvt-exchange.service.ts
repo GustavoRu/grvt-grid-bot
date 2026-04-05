@@ -88,10 +88,13 @@ export class GrvtExchangeService implements OnModuleInit {
     const markets = await this.exchange.loadMarkets();
     const symbol = this.toSymbol(instrument);
     const market = markets[symbol];
-    return {
-      minAmount: (market?.limits?.amount?.min as number | undefined) ?? 0,
-      minNotional: (market?.limits?.cost?.min as number | undefined) ?? 0,
-    };
+    const minAmount = (market?.limits?.amount?.min as number | undefined) ?? 0;
+    const rawMinNotional = (market?.limits?.cost?.min as number | undefined) ?? 0;
+    // GRVT enforces a notional floor that may exceed what CCXT reports.
+    // Apply a 5% safety buffer (20 → 21) to prevent borderline orders from being rejected.
+    const minNotional = rawMinNotional > 0 ? Math.ceil(rawMinNotional * 1.05) : 21;
+    this.logger.debug(`Market limits for ${instrument}: minAmount=${minAmount}, rawMinNotional=${rawMinNotional}, effectiveMinNotional=${minNotional}`);
+    return { minAmount, minNotional };
   }
 
   /** Place a limit order */

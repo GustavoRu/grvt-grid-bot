@@ -29,9 +29,11 @@ export class GridCalculator {
       // Use ceiling for notional-derived min to ensure price × size >= minNotional
       const minByNotional = minNotional > 0 ? minNotional / price : 0;
       const effectiveMin = Math.max(minAmount, minByNotional);
+      // Always round UP so price × size never falls below capitalPerGrid or minNotional.
+      // Rounding down can lose a few cents and push notional below the exchange threshold.
       const orderSize = effectiveMin > 0
-        ? Math.max(this.roundSize(rawSize), this.roundSizeUp(effectiveMin))
-        : this.roundSize(rawSize);
+        ? Math.max(this.roundSizeUp(rawSize), this.roundSizeUp(effectiveMin))
+        : this.roundSizeUp(rawSize);
       return { index, price: this.roundPrice(price), orderSize };
     });
   }
