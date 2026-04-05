@@ -22,26 +22,14 @@ export class GridCalculator {
     // Investment per grid interval split evenly across all levels
     const capitalPerGrid = (investmentAmount * leverage) / gridCount;
 
-    const levels = prices.map((price, index) => ({
-      index,
-      price: this.roundPrice(price),
-      orderSize: this.roundSize(capitalPerGrid / price),
-    }));
-
-    // Validate minimum order size
-    if (minOrderSize > 0) {
-      const tooSmall = levels.filter((l) => l.orderSize < minOrderSize);
-      if (tooSmall.length > 0) {
-        const midPrice = (upperPrice + lowerPrice) / 2;
-        const minInvestment = Math.ceil((minOrderSize * midPrice * gridCount) / leverage);
-        throw new Error(
-          `Order size ${tooSmall[0].orderSize} is below exchange minimum ${minOrderSize}. ` +
-          `Minimum investment for ${gridCount} grids at this price: ~$${minInvestment} USDT`,
-        );
-      }
-    }
-
-    return levels;
+    return prices.map((price, index) => {
+      const rawSize = capitalPerGrid / price;
+      // Clamp to exchange minimum — if investment is small, orders are rounded up to min size
+      const orderSize = minOrderSize > 0
+        ? Math.max(this.roundSize(rawSize), minOrderSize)
+        : this.roundSize(rawSize);
+      return { index, price: this.roundPrice(price), orderSize };
+    });
   }
 
   /**

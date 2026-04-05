@@ -90,15 +90,13 @@ async function main() {
   console.log(`\n🔢 Calculating grid levels…`);
   const priceOffset = currentPrice * 0.03; // ±3% from current price
   const GRID_COUNT = 10;
+  const INVESTMENT_USDT = 100; // user-defined — any amount is valid
 
-  // Fetch minimum order size from market info
+  // Fetch minimum order size from market info (exchange constraint, not investment constraint)
   const markets = exchange.markets ?? {};
   const marketInfo = markets['BTC/USDT:USDT'];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const minOrderSize: number = (marketInfo as any)?.limits?.amount?.min ?? 0.001;
-  // Minimum investment to satisfy exchange minimum: minSize × midPrice × grids / leverage
-  const minInvestment = Math.ceil((minOrderSize * currentPrice * GRID_COUNT) / 2);
-  const investmentAmount = Math.max(500, minInvestment); // use at least $500 for test
 
   const config = {
     instrument: INSTRUMENT,
@@ -107,13 +105,18 @@ async function main() {
     gridCount: GRID_COUNT,
     gridType: 'arithmetic' as const,
     leverage: 2,
-    investmentAmount,
+    investmentAmount: INVESTMENT_USDT,
   };
 
-  console.log(`   Min order size: ${minOrderSize} BTC | Min investment for ${GRID_COUNT} grids: ~$${minInvestment}`);
-  console.log(`   Using investment: $${investmentAmount} USDT`);
+  console.log(`   Exchange min order size: ${minOrderSize} BTC (orders clamped up if needed)`);
 
   const levels = GridCalculator.calculateLevels(config, minOrderSize);
+
+  // Warn if orders were clamped to minimum size
+  const rawSize = (INVESTMENT_USDT * 2) / GRID_COUNT / currentPrice;
+  if (rawSize < minOrderSize) {
+    console.log(`   ⚠️  Calculated size (${rawSize.toFixed(6)}) < min (${minOrderSize}) → orders clamped to ${minOrderSize} BTC`);
+  }
   const { buyLevels, sellLevels } = GridCalculator.splitLevelsByPrice(levels, currentPrice);
   const profitPerGrid = GridCalculator.calculateGridProfit(config);
 
