@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { formatUsd, formatDate } from '@/lib/utils';
-import { Plus, Square, Trash2 } from 'lucide-react';
+import { Plus, Square, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { NewGridForm } from './new-grid-form';
 import type { Grid } from '@grvt-grid-bot/shared';
 
@@ -16,13 +17,27 @@ const STATUS_COLORS: Record<string, string> = {
   completed: 'text-blue-400',
 };
 
+const DIRECTION_ICON: Record<string, React.ElementType> = {
+  long: TrendingUp,
+  short: TrendingDown,
+  neutral: Minus,
+};
+
+const DIRECTION_COLOR: Record<string, string> = {
+  long: 'text-green-400',
+  short: 'text-red-400',
+  neutral: 'text-blue-400',
+};
+
 export function GridsPage() {
   const [showForm, setShowForm] = useState(false);
   const queryClient = useQueryClient();
+  const router = useRouter();
 
   const { data: grids = [], isLoading } = useQuery({
     queryKey: ['grids'],
     queryFn: () => api.grids.list(),
+    refetchInterval: 10_000,
   });
 
   const stopMutation = useMutation({
@@ -58,58 +73,74 @@ export function GridsPage() {
       <div className="rounded-lg border border-border bg-card">
         {grids.length === 0 ? (
           <div className="p-8 text-center text-muted-foreground text-sm">
-            No grids yet. Click "New Grid" to get started.
+            No grids yet. Click &quot;New Grid&quot; to get started.
           </div>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-muted-foreground border-b border-border">
+              <tr className="text-muted-foreground border-b border-border text-xs uppercase tracking-wide">
                 <th className="text-left p-3">Instrument</th>
+                <th className="text-left p-3">Dir</th>
                 <th className="text-left p-3">Status</th>
                 <th className="text-right p-3">Range</th>
                 <th className="text-right p-3">Grids</th>
-                <th className="text-right p-3">Leverage</th>
+                <th className="text-right p-3">Lev.</th>
                 <th className="text-right p-3">Investment</th>
-                <th className="text-right p-3">Realized PnL</th>
-                <th className="text-right p-3">Trades</th>
+                <th className="text-right p-3">Grid PnL</th>
+                <th className="text-right p-3">Rounds</th>
                 <th className="text-right p-3">Created</th>
                 <th className="p-3" />
               </tr>
             </thead>
             <tbody>
-              {grids.map((g: Grid) => (
-                <tr key={g.id} className="border-b border-border last:border-0 hover:bg-accent/50">
-                  <td className="p-3 font-medium">{g.instrument}</td>
-                  <td className={`p-3 capitalize ${STATUS_COLORS[g.status] ?? ''}`}>{g.status}</td>
-                  <td className="p-3 text-right text-muted-foreground text-xs">
-                    {formatUsd(g.lowerPrice, 0)} – {formatUsd(g.upperPrice, 0)}
-                  </td>
-                  <td className="p-3 text-right">{g.gridCount}</td>
-                  <td className="p-3 text-right">{g.leverage}x</td>
-                  <td className="p-3 text-right">{formatUsd(g.investmentAmount, 0)}</td>
-                  <td
-                    className={`p-3 text-right font-medium ${g.realizedPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}
+              {grids.map((g: Grid) => {
+                const DirIcon = DIRECTION_ICON[g.direction] ?? Minus;
+                return (
+                  <tr
+                    key={g.id}
+                    onClick={() => router.push(`/grids/${g.id}`)}
+                    className="border-b border-border last:border-0 hover:bg-accent/50 cursor-pointer"
                   >
-                    {formatUsd(g.realizedPnl)}
-                  </td>
-                  <td className="p-3 text-right text-muted-foreground">{g.tradeCount}</td>
-                  <td className="p-3 text-right text-muted-foreground text-xs">
-                    {formatDate(g.createdAt)}
-                  </td>
-                  <td className="p-3 text-right">
-                    {g.status === 'active' && (
-                      <button
-                        onClick={() => stopMutation.mutate(g.id)}
-                        disabled={stopMutation.isPending}
-                        className="p-1 hover:text-red-400 text-muted-foreground transition-colors"
-                        title="Stop grid"
-                      >
-                        <Square className="h-4 w-4" />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    <td className="p-3 font-medium">{g.instrument}</td>
+                    <td className="p-3">
+                      <DirIcon className={`h-4 w-4 ${DIRECTION_COLOR[g.direction] ?? ''}`} />
+                    </td>
+                    <td className={`p-3 capitalize ${STATUS_COLORS[g.status] ?? ''}`}>
+                      {g.status}
+                    </td>
+                    <td className="p-3 text-right text-muted-foreground text-xs">
+                      {formatUsd(g.lowerPrice, 0)} – {formatUsd(g.upperPrice, 0)}
+                    </td>
+                    <td className="p-3 text-right">{g.gridCount}</td>
+                    <td className="p-3 text-right">{g.leverage}x</td>
+                    <td className="p-3 text-right">{formatUsd(g.investmentAmount, 0)}</td>
+                    <td
+                      className={`p-3 text-right font-medium ${g.realizedPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}
+                    >
+                      {formatUsd(g.realizedPnl)}
+                    </td>
+                    <td className="p-3 text-right text-muted-foreground">{g.tradeCount}</td>
+                    <td className="p-3 text-right text-muted-foreground text-xs">
+                      {formatDate(g.createdAt)}
+                    </td>
+                    <td className="p-3 text-right">
+                      {g.status === 'active' && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            stopMutation.mutate(g.id);
+                          }}
+                          disabled={stopMutation.isPending}
+                          className="p-1 hover:text-red-400 text-muted-foreground transition-colors"
+                          title="Stop grid"
+                        >
+                          <Square className="h-4 w-4" />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

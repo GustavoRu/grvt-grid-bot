@@ -1,4 +1,12 @@
-import type { GridConfig, Grid, GridOrder, PnlSnapshot } from '@grvt-grid-bot/shared';
+import type {
+  GridConfig,
+  Grid,
+  GridOrder,
+  GridTrade,
+  GridStats,
+  FundingPayment,
+  PnlSnapshot,
+} from '@grvt-grid-bot/shared';
 
 const BOT_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
@@ -21,10 +29,13 @@ export const api = {
     create: (config: GridConfig) =>
       request<Grid>('/grids', { method: 'POST', body: JSON.stringify(config) }),
     stop: (id: string) => request<{ success: boolean }>(`/grids/${id}/stop`, { method: 'POST' }),
-    orders: (id: string) => request<GridOrder[]>(`/grids/${id}/orders`),
+    stats: (id: string) => request<GridStats>(`/grids/${id}/stats`),
+    orders: (id: string, status?: string) =>
+      request<GridOrder[]>(`/grids/${id}/orders${status ? `?status=${status}` : ''}`),
+    trades: (id: string) => request<GridTrade[]>(`/grids/${id}/trades`),
+    funding: (id: string) => request<FundingPayment[]>(`/grids/${id}/funding`),
     pnl: (id: string) => request<PnlSnapshot[]>(`/grids/${id}/pnl`),
   },
 };
 
-// Re-export shared types for convenience
-export type { GridConfig, Grid, GridOrder, PnlSnapshot };
+export type { GridConfig, Grid, GridOrder, GridTrade, GridStats, FundingPayment, PnlSnapshot };
