@@ -83,12 +83,10 @@ export class GrvtExchangeService implements OnModuleInit {
   /** Place a limit order */
   async placeOrder(req: GrvtOrderRequest): Promise<GrvtOrderResponse> {
     const symbol = this.toSymbol(req.instrument);
-    // GRVT requires GTT/IOC/FOK — GTT is the GTC equivalent (needs expiry)
-    const tif = req.timeInForce ?? 'GTT';
+    // CCXT maps GTC → GOOD_TILL_TIME for GRVT. Do NOT pass postOnly: when postOnly=true
+    // CCXT skips setting time_in_force entirely, causing GRVT to reject with code 2030.
     const params: Record<string, unknown> = {
-      timeInForce: tif,
-      ...(tif === 'GTT' ? { expiry: Date.now() + 90 * 24 * 60 * 60 * 1000 } : {}),
-      postOnly: req.postOnly ?? false,
+      timeInForce: req.timeInForce ?? 'GTC',
       reduceOnly: req.reduceOnly ?? false,
     };
 

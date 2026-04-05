@@ -246,8 +246,7 @@ export class GridEngineService {
           type: 'limit',
           price: level.price,
           size: level.orderSize,
-          timeInForce: 'GTT',
-          postOnly: true,
+          timeInForce: 'GTC',
         });
 
         const dbOrder = await this.prisma.gridOrder.create({
@@ -288,8 +287,7 @@ export class GridEngineService {
         type: 'limit',
         price: counterLevel.price,
         size: counterLevel.orderSize,
-        timeInForce: 'GTT',
-        postOnly: true,
+        timeInForce: 'GTC',
       });
 
       const dbOrder = await this.prisma.gridOrder.create({
