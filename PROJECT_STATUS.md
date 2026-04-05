@@ -1,7 +1,7 @@
 # GRVT Grid Trading Bot — Project Plan & Status
 
 > Este archivo vive en la raíz del repo y se actualiza en cada sesión de trabajo.
-> Última actualización: 2026-04-04
+> Última actualización: 2026-04-05
 
 ---
 
@@ -60,7 +60,7 @@ Crear un bot de grid trading (futures) que opere sobre GRVT (grvt.io) via API, r
 ---
 
 ### FASE 1 — Grid Engine MVP
-**Estado: 🟡 Parcialmente implementado**
+**Estado: 🟡 Parcialmente implementado (backend alineado con Pionex)**
 **Objetivo:** Grid bot funcional con una grilla arithmetic en un solo par.
 
 **Ya implementado:**
@@ -69,6 +69,11 @@ Crear un bot de grid trading (futures) que opere sobre GRVT (grvt.io) via API, r
 - [x] Polling de fills + rebalanceo automático
 - [x] Tracking de PnL realizado + snapshots
 - [x] Safety: stop loss y take profit por precio
+- [x] direction (long/short/neutral), entryPrice, fundingPnl en DB y tipos compartidos
+- [x] FundingPayment model para historial de financiación
+- [x] Controller con endpoints completos: stats, orders, trades, funding, pnl
+- [x] getStats(): APR anualizado, rounds24h, profitPerGridPct, daysActive, trendPnl
+- [x] Migración DB: `add-direction-funding` aplicada en Supabase
 
 **Pendiente Fase 1:**
 - [ ] Listener WebSocket de fills (reemplazar polling)
@@ -81,23 +86,25 @@ Crear un bot de grid trading (futures) que opere sobre GRVT (grvt.io) via API, r
 ---
 
 ### FASE 2 — Dashboard MVP
-**Estado: 🟡 Base implementada**
+**Estado: 🟢 MVP completo**
 **Objetivo:** Dashboard web para crear, monitorear y detener grillas.
 
 **Ya implementado:**
 - [x] Layout + sidebar de navegación
 - [x] Página Home con summary cards
-- [x] Página Grids: lista con acciones
-- [x] Formulario "Nueva Grilla" (modal)
-- [x] React Query con polling cada 5s
+- [x] Página Grids: lista con acciones, filas clickeables, columna dirección con íconos
+- [x] Formulario "Nueva Grilla": selector de dirección (Long/Short/Neutral) con íconos + descripción
+- [x] React Query con polling automático (10s grids, 15s stats, 30s chart)
+- [x] Página detalle `/grids/[id]` con 5 tabs:
+  - **Summary**: 8 métricas (APR, rondas, PnL desglosado) + gráfico de PnL con Recharts
+  - **Orders**: tabla filtrable por estado, color coding buy/sell, badges de estado
+  - **Trades**: historial de rondas completadas, profit acumulado
+  - **Parameters**: vista read-only de configuración de la grilla
+  - **Funding**: historial de pagos de financiación con neto total
 
 **Pendiente Fase 2:**
-- [ ] Página detalle `/grids/[id]`
-- [ ] Gráfico con niveles de la grilla
-- [ ] PnL chart con Recharts
-- [ ] Tabla de órdenes y trades
-- [ ] API routes en Next.js (actualmente habla directo al bot)
-- [ ] Auth básica
+- [ ] API routes en Next.js (actualmente habla directo al bot — ok para desarrollo)
+- [ ] Auth básica (JWT o cookie simple)
 
 ---
 
@@ -223,6 +230,16 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 - Decidimos usar CCXT como capa de abstracción principal
 - Arquitectura: NestJS (bot) + Next.js (dashboard) + Supabase (DB) en monorepo Turborepo
 - Hosting: Railway ($5/mes con crédito) para bot, Vercel gratis para dashboard
+
+### 2026-04-05 — Sesión 3: Alineación Pionex + Dashboard completo (Claude Code)
+- Backend alineado con UI de Pionex: direction, entryPrice, fundingPnl, FundingPayment model
+- Migración DB `add-direction-funding` aplicada en Supabase
+- Controller reescrito con endpoints para cada tab: stats, orders, trades, funding, pnl
+- getStats() calcula APR anualizado, rounds24h, profitPerGrid, trendPnl, daysActive
+- Dashboard: formulario de nueva grilla con selector de dirección visual
+- Dashboard: filas de grillas clickeables → detalle, auto-refresh, ícono de dirección
+- Dashboard: página `/grids/[id]` con 5 tabs (Summary, Orders, Trades, Parameters, Funding)
+- TypeScript limpio en todos los workspaces ✅
 
 ### 2026-04-04 — Sesión 2: Scaffolding completo (Claude Code)
 - Monorepo Turborepo completo con pnpm workspaces
