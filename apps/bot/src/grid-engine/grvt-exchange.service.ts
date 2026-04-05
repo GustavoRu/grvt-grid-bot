@@ -15,7 +15,7 @@ export class GrvtExchangeService implements OnModuleInit {
 
   constructor(private readonly config: ConfigService) {}
 
-  onModuleInit() {
+  async onModuleInit() {
     const env = this.config.get<string>('GRVT_ENV') ?? 'testnet';
     // apiKey = GRVT API key (session auth), secret = ETH private key (EIP-712 order signing)
     const apiKey = this.config.getOrThrow<string>('GRVT_API_KEY');
@@ -41,6 +41,17 @@ export class GrvtExchangeService implements OnModuleInit {
     this.exchange.requiredCredentials.privateKey = false;
 
     this.logger.log(`GRVT CCXT exchange initialized (${env})`);
+
+    // With API key auth, CCXT's signIn() skips initializeClient() — the step that
+    // authorizes GRVT's order builder on behalf of the user. Without it, all orders
+    // fail with code 7504 "Builder is not authorized". Call it explicitly here.
+    try {
+      await this.exchange.loadMarkets();    // triggers signIn (API key auth)
+      await this.exchange.initializeClient(); // authorizes the CCXT builder via EIP-712
+      this.logger.log('GRVT builder authorization confirmed');
+    } catch (err) {
+      this.logger.warn('Builder authorization failed — orders may be rejected', err);
+    }
   }
 
   /** Fetch all available perpetual instruments */

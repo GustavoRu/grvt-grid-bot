@@ -26,10 +26,11 @@ export class GridCalculator {
     return prices.map((price, index) => {
       const rawSize = capitalPerGrid / price;
       // Clamp to largest of: calculated size, min amount, min notional / price
+      // Use ceiling for notional-derived min to ensure price × size >= minNotional
       const minByNotional = minNotional > 0 ? minNotional / price : 0;
       const effectiveMin = Math.max(minAmount, minByNotional);
       const orderSize = effectiveMin > 0
-        ? Math.max(this.roundSize(rawSize), this.roundSize(effectiveMin))
+        ? Math.max(this.roundSize(rawSize), this.roundSizeUp(effectiveMin))
         : this.roundSize(rawSize);
       return { index, price: this.roundPrice(price), orderSize };
     });
@@ -70,6 +71,11 @@ export class GridCalculator {
 
   private static roundSize(size: number): number {
     return Math.round(size * 10000) / 10000; // 4 decimals
+  }
+
+  /** Ceiling to 4 decimals — guarantees notional >= minimum after rounding */
+  private static roundSizeUp(size: number): number {
+    return Math.ceil(size * 10000) / 10000;
   }
 
   /**
