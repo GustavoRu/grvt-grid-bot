@@ -51,6 +51,9 @@ interface ActiveGrid {
   grid: Grid;
   levels: GridLevel[];
   orderMap: Map<string, GridOrder>; // grvtOrderId → GridOrder
+  windowLow: number;    // lowest level index currently in active window
+  windowHigh: number;   // highest level index currently in active window
+  rebalancing: boolean; // lock to prevent concurrent sliding-window rebalances
 }
 
 // GRVT enforces a hard limit on open orders per sub-account per instrument.
@@ -164,8 +167,12 @@ export class GridEngineService {
         data: { status: 'active', currentPrice, entryPrice: currentPrice },
       });
 
-      this.activeGrids.set(grid.id, { grid: activeGrid, levels, orderMap });
-      this.logger.log(`✅ Grid ${grid.id} active with ${orderMap.size} orders`);
+      // Track the active window boundaries so the sliding window knows what to shift
+      const windowLow = activeBuys[0]?.index ?? 0;
+      const windowHigh = activeSells.at(-1)?.index ?? levels.length - 1;
+
+      this.activeGrids.set(grid.id, { grid: activeGrid, levels, orderMap, windowLow, windowHigh, rebalancing: false });
+      this.logger.log(`✅ Grid ${grid.id} active with ${orderMap.size} orders (window: levels ${windowLow}–${windowHigh})`);
 
       return activeGrid;
     } catch (error) {
@@ -543,9 +550,18 @@ export class GridEngineService {
         active.grid = { ...active.grid, currentPrice: price };
       }
 
+      // Sliding window: shift active orders as price drifts across levels.
+      // Use a per-grid lock so concurrent price ticks don't stack up rebalances.
+      if (!active.rebalancing) {
+        active.rebalancing = true;
+        this.rebalanceWindow(gridId, active, price)
+          .catch((err) => this.logger.error(`Rebalance error for grid ${gridId}`, err))
+          .finally(() => { active.rebalancing = false; });
+      }
+
       // Stop loss check
       const stopLoss = active.grid.stopLoss;
-      if (stopLoss && (price <= stopLoss)) {
+      if (stopLoss && price <= stopLoss) {
         this.logger.warn(`🛑 Stop loss triggered for grid ${gridId} at ${price} (SL: ${stopLoss})`);
         this.stopGrid(gridId).catch((err) => this.logger.error('Failed to stop grid on SL', err));
       }
@@ -556,6 +572,127 @@ export class GridEngineService {
         this.logger.log(`✅ Take profit triggered for grid ${gridId} at ${price} (TP: ${takeProfit})`);
         this.stopGrid(gridId).catch((err) => this.logger.error('Failed to stop grid on TP', err));
       }
+    }
+  }
+
+  /**
+   * Sliding window rebalancer.
+   *
+   * Keeps the active order window centered around the current price.
+   * As price drifts up:  cancel the lowest buy (too far from market) → open a new sell one step higher.
+   * As price drifts down: cancel the highest sell (too far from market) → open a new buy one step lower.
+   *
+   * Only runs when the ideal window boundaries differ from the current ones,
+   * so it's a no-op on most price ticks.
+   */
+  private async rebalanceWindow(gridId: string, active: ActiveGrid, currentPrice: number): Promise<void> {
+    const slotsPerSide = Math.floor(MAX_OPEN_ORDERS / 2);
+
+    // Find the first level index >= currentPrice (the boundary between buys and sells)
+    const midIndex = active.levels.findIndex((l) => l.price >= currentPrice);
+    if (midIndex < 0) return; // price above all levels — nothing to do
+
+    // Ideal window: slotsPerSide buys below mid, slotsPerSide sells above mid
+    const idealLow  = Math.max(0, midIndex - slotsPerSide);
+    const idealHigh = Math.min(active.levels.length - 1, midIndex + slotsPerSide - 1);
+
+    // No shift needed
+    if (idealLow === active.windowLow && idealHigh === active.windowHigh) return;
+
+    this.logger.debug(
+      `Sliding window shift: [${active.windowLow}–${active.windowHigh}] → [${idealLow}–${idealHigh}] at price ${currentPrice}`,
+    );
+
+    // Shift UP: price moved up → drop stale low buys, add new high sells
+    while (active.windowLow < idealLow) {
+      const cancelIndex = active.windowLow;
+      const cancelLevel = active.levels[cancelIndex];
+
+      const staleOrder = await this.prisma.gridOrder.findFirst({
+        where: { gridId, gridLevel: cancelIndex, side: 'buy', status: 'open' },
+      });
+      if (staleOrder?.grvtOrderId) {
+        await this.exchange.cancelOrder(staleOrder.grvtOrderId, active.grid.instrument).catch(() => {});
+        await this.prisma.gridOrder.update({ where: { id: staleOrder.id }, data: { status: 'cancelled' } });
+        active.orderMap.delete(staleOrder.grvtOrderId);
+        this.logger.debug(`Window ↑: cancelled stale buy @ ${cancelLevel.price} [level ${cancelIndex}]`);
+      }
+      active.windowLow++;
+
+      // Place new sell at the top of the window
+      const newHighIndex = active.windowHigh + 1;
+      if (newHighIndex < active.levels.length) {
+        await this.placeWindowOrder(active, newHighIndex, 'sell');
+        active.windowHigh = newHighIndex;
+      }
+    }
+
+    // Shift DOWN: price moved down → drop stale high sells, add new low buys
+    while (active.windowHigh > idealHigh) {
+      const cancelIndex = active.windowHigh;
+      const cancelLevel = active.levels[cancelIndex];
+
+      const staleOrder = await this.prisma.gridOrder.findFirst({
+        where: { gridId, gridLevel: cancelIndex, side: 'sell', status: 'open' },
+      });
+      if (staleOrder?.grvtOrderId) {
+        await this.exchange.cancelOrder(staleOrder.grvtOrderId, active.grid.instrument).catch(() => {});
+        await this.prisma.gridOrder.update({ where: { id: staleOrder.id }, data: { status: 'cancelled' } });
+        active.orderMap.delete(staleOrder.grvtOrderId);
+        this.logger.debug(`Window ↓: cancelled stale sell @ ${cancelLevel.price} [level ${cancelIndex}]`);
+      }
+      active.windowHigh--;
+
+      // Place new buy at the bottom of the window
+      const newLowIndex = active.windowLow - 1;
+      if (newLowIndex >= 0) {
+        await this.placeWindowOrder(active, newLowIndex, 'buy');
+        active.windowLow = newLowIndex;
+      }
+    }
+  }
+
+  /** Place a single order as part of a window shift. Skips if already open at that level/side. */
+  private async placeWindowOrder(active: ActiveGrid, levelIndex: number, side: 'buy' | 'sell'): Promise<void> {
+    const level = active.levels[levelIndex];
+    if (!level) return;
+
+    // Skip if already open (e.g. a counter-order landed here after a fill)
+    const existing = await this.prisma.gridOrder.findFirst({
+      where: { gridId: active.grid.id, gridLevel: levelIndex, side, status: 'open' },
+    });
+    if (existing) return;
+
+    // Guard: don't place outside GRVT price protection band (~±10%)
+    const marketPrice = active.grid.currentPrice ?? 0;
+    if (marketPrice > 0 && Math.abs(level.price - marketPrice) / marketPrice > 0.12) return;
+
+    try {
+      const response = await this.exchange.placeOrder({
+        instrument: active.grid.instrument,
+        side,
+        type: 'limit',
+        price: level.price,
+        size: level.orderSize,
+        timeInForce: 'GTC',
+      });
+
+      const dbOrder = await this.prisma.gridOrder.create({
+        data: {
+          gridId: active.grid.id,
+          gridLevel: level.index,
+          side,
+          price: level.price,
+          size: level.orderSize,
+          status: 'open',
+          grvtOrderId: response.orderId,
+        },
+      });
+
+      active.orderMap.set(response.orderId, dbOrder);
+      this.logger.debug(`Window: placed ${side} @ ${level.price} [level ${levelIndex}]`);
+    } catch (err) {
+      this.logger.error(`Window order failed: ${side} @ ${level.price}`, err);
     }
   }
 
