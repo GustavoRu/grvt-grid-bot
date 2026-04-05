@@ -65,6 +65,22 @@ export class GridEngineService {
   ) {
     // Listen to price updates to trigger stop-loss checks
     this.marketData.on('price', (update) => this.onPriceUpdate(update));
+    // Clean up orphaned orders from failed/error grids on startup
+    this.pruneStaleOrders().catch(() => {});
+  }
+
+  /** Remove open orders in DB that belong to grids in error/stopped state.
+   *  Prevents grvtOrderId unique constraint failures on restart. */
+  private async pruneStaleOrders(): Promise<void> {
+    const result = await this.prisma.gridOrder.deleteMany({
+      where: {
+        status: { in: ['pending', 'open'] },
+        grid: { status: { in: ['error', 'stopped', 'completed'] } },
+      },
+    });
+    if (result.count > 0) {
+      this.logger.log(`Pruned ${result.count} stale orders from non-active grids`);
+    }
   }
 
   /** Start a new grid from config */
@@ -249,8 +265,11 @@ export class GridEngineService {
           timeInForce: 'GTC',
         });
 
-        const dbOrder = await this.prisma.gridOrder.create({
-          data: {
+        // upsert: if grvtOrderId already exists (e.g. nonce reuse after restart)
+        // update the record to point to the new grid instead of failing
+        const dbOrder = await this.prisma.gridOrder.upsert({
+          where: { grvtOrderId: response.orderId },
+          create: {
             gridId: grid.id,
             gridLevel: level.index,
             side: level.side,
@@ -258,6 +277,14 @@ export class GridEngineService {
             size: level.orderSize,
             status: 'open',
             grvtOrderId: response.orderId,
+          },
+          update: {
+            gridId: grid.id,
+            gridLevel: level.index,
+            side: level.side,
+            price: level.price,
+            size: level.orderSize,
+            status: 'open',
           },
         });
 
