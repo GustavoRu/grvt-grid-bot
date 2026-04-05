@@ -53,6 +53,10 @@ interface ActiveGrid {
   orderMap: Map<string, GridOrder>; // grvtOrderId → GridOrder
 }
 
+// GRVT enforces a hard limit on open orders per sub-account per instrument.
+// Tier 1 (default / testnet) = 20. Adjust if account is a higher tier.
+const MAX_OPEN_ORDERS = 20;
+
 @Injectable()
 export class GridEngineService {
   private readonly logger = new Logger(GridEngineService.name);
@@ -139,9 +143,20 @@ export class GridEngineService {
         `Grid levels: ${levels.length} total, ${buyLevels.length} buys, ${sellLevels.length} sells at price ${currentPrice}`,
       );
 
+      // GRVT limits open orders per instrument per sub-account (Tier 1 = 20).
+      // Only activate the N/2 buy levels closest to current price (highest prices)
+      // and N/2 sell levels closest to current price (lowest prices).
+      const slotsPerSide = Math.floor(MAX_OPEN_ORDERS / 2);
+      const activeBuys = buyLevels.slice(-slotsPerSide);  // nearest buys = highest prices
+      const activeSells = sellLevels.slice(0, slotsPerSide); // nearest sells = lowest prices
+      this.logger.log(
+        `Order window: ${activeBuys.length} buys (${activeBuys[0]?.price}–${activeBuys.at(-1)?.price}) + ` +
+        `${activeSells.length} sells (${activeSells[0]?.price}–${activeSells.at(-1)?.price}) [limit: ${MAX_OPEN_ORDERS}]`,
+      );
+
       // Place initial orders
       const orderMap = new Map<string, GridOrder>();
-      await this.placeInitialOrders(grid, buyLevels, sellLevels, orderMap);
+      await this.placeInitialOrders(grid, activeBuys, activeSells, orderMap);
 
       // Activate grid — set entryPrice = currentPrice at start (Pionex "Precio inicial")
       const activeGrid = await this.prisma.grid.update({
@@ -346,6 +361,17 @@ export class GridEngineService {
     });
     if (existing) {
       this.logger.debug(`Counter ${side} @ ${counterLevel.price} already open (${existing.grvtOrderId}) — skipping`);
+      return;
+    }
+
+    // Respect GRVT open order cap — don't place if we'd exceed the limit
+    const openCount = await this.prisma.gridOrder.count({
+      where: { gridId: active.grid.id, status: 'open' },
+    });
+    if (openCount >= MAX_OPEN_ORDERS) {
+      this.logger.warn(
+        `Open order cap reached (${openCount}/${MAX_OPEN_ORDERS}) — skipping counter ${side} @ ${counterLevel.price}`,
+      );
       return;
     }
 
