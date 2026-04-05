@@ -232,9 +232,20 @@ export class GridEngineService {
         });
 
         for (const dbOrder of dbOpenOrders) {
-          if (dbOrder.grvtOrderId && !openOrderIds.has(dbOrder.grvtOrderId)) {
-            this.logger.debug(`Order ${dbOrder.grvtOrderId} no longer open — assuming filled`);
-            await this.onOrderFilled(dbOrder.grvtOrderId, dbOrder.price);
+          // Skip placeholder IDs returned by CCXT when an order was rejected
+          // (e.g. "0x00" or "0x0000000000000000000000000000000000000000000000000000000000000000")
+          const id = dbOrder.grvtOrderId;
+          if (!id || /^0x0+$/.test(id)) {
+            this.logger.debug(`Skipping invalid order ID ${id} — marking as error`);
+            await this.prisma.gridOrder.update({
+              where: { id: dbOrder.id },
+              data: { status: 'error' },
+            });
+            continue;
+          }
+          if (!openOrderIds.has(id)) {
+            this.logger.debug(`Order ${id} no longer open — assuming filled`);
+            await this.onOrderFilled(id, dbOrder.price);
           }
         }
       } catch (err) {
@@ -306,6 +317,19 @@ export class GridEngineService {
     const counterIndex = side === 'sell' ? filledOrder.gridLevel + 1 : filledOrder.gridLevel - 1;
     const counterLevel = active.levels[counterIndex];
     if (!counterLevel) return; // at the edge of the grid
+
+    // Guard: don't place if price is >12% away from current market price
+    // (GRVT price protection band is ~±10%, leave 2% margin)
+    const marketPrice = active.grid.currentPrice ?? 0;
+    if (marketPrice > 0) {
+      const deviation = Math.abs(counterLevel.price - marketPrice) / marketPrice;
+      if (deviation > 0.12) {
+        this.logger.warn(
+          `Skipping counter ${side} @ ${counterLevel.price} — ${(deviation * 100).toFixed(1)}% from market (${marketPrice}), outside protection band`,
+        );
+        return;
+      }
+    }
 
     try {
       const response = await this.exchange.placeOrder({
