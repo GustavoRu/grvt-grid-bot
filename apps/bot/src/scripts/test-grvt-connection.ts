@@ -104,6 +104,7 @@ async function main() {
     lowerPrice: Math.round(currentPrice - priceOffset),
     gridCount: GRID_COUNT,
     gridType: 'arithmetic' as const,
+    direction: 'long' as const,
     leverage: 2,
     investmentAmount: INVESTMENT_USDT,
   };

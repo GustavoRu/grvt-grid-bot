@@ -15,14 +15,17 @@ interface Grid {
   lowerPrice: number;
   gridCount: number;
   gridType: string;
+  direction: string;
   leverage: number;
   investmentAmount: number;
   stopLoss: number | null;
   takeProfit: number | null;
   status: string;
+  entryPrice: number;
   currentPrice: number | null;
   realizedPnl: number;
   unrealizedPnl: number;
+  fundingPnl: number;
   totalVolume: number;
   tradeCount: number;
   createdAt: Date;
@@ -74,13 +77,16 @@ export class GridEngineService {
         lowerPrice: config.lowerPrice,
         gridCount: config.gridCount,
         gridType: config.gridType,
+        direction: config.direction ?? 'long',
         leverage: config.leverage,
         investmentAmount: config.investmentAmount,
         stopLoss: config.stopLoss,
         takeProfit: config.takeProfit,
         status: 'pending',
+        entryPrice: 0, // set after fetching market price
         realizedPnl: 0,
         unrealizedPnl: 0,
+        fundingPnl: 0,
         totalVolume: 0,
         tradeCount: 0,
       },
@@ -111,10 +117,10 @@ export class GridEngineService {
       const orderMap = new Map<string, GridOrder>();
       await this.placeInitialOrders(grid, buyLevels, sellLevels, orderMap);
 
-      // Activate grid
+      // Activate grid — set entryPrice = currentPrice at start (Pionex "Precio inicial")
       const activeGrid = await this.prisma.grid.update({
         where: { id: grid.id },
-        data: { status: 'active', currentPrice },
+        data: { status: 'active', currentPrice, entryPrice: currentPrice },
       });
 
       this.activeGrids.set(grid.id, { grid: activeGrid, levels, orderMap });
@@ -348,9 +354,85 @@ export class GridEngineService {
         gridId,
         realizedPnl: grid.realizedPnl,
         unrealizedPnl: grid.unrealizedPnl,
-        totalPnl: grid.realizedPnl + grid.unrealizedPnl,
+        fundingPnl: grid.fundingPnl,
+        totalPnl: grid.realizedPnl + grid.unrealizedPnl + grid.fundingPnl,
         currentPrice: grid.currentPrice ?? 0,
       },
+    });
+  }
+
+  /** Computed stats for a grid — Pionex-style summary */
+  async getStats(gridId: string) {
+    const grid = await this.prisma.grid.findUniqueOrThrow({ where: { id: gridId } });
+
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const rounds24h = await this.prisma.gridTrade.count({
+      where: { gridId, timestamp: { gte: since24h } },
+    });
+
+    const daysActive = (Date.now() - grid.createdAt.getTime()) / (1000 * 60 * 60 * 24);
+    const gridPnl = grid.realizedPnl;
+    const trendPnl = grid.unrealizedPnl;
+    const fundingPnl = grid.fundingPnl;
+    const totalPnl = gridPnl + trendPnl + fundingPnl;
+    const totalPnlPct = grid.investmentAmount > 0 ? (totalPnl / grid.investmentAmount) * 100 : 0;
+
+    // APR = (pnl / investment) / daysActive * 365 * 100
+    const aprGrid = daysActive > 0 ? (gridPnl / grid.investmentAmount / daysActive) * 365 * 100 : 0;
+    const aprTotal = daysActive > 0 ? (totalPnl / grid.investmentAmount / daysActive) * 365 * 100 : 0;
+
+    // Profit per grid interval % = gridSpacing / midPrice
+    const midPrice = (grid.upperPrice + grid.lowerPrice) / 2;
+    const gridSpacing = (grid.upperPrice - grid.lowerPrice) / grid.gridCount;
+    const profitPerGridPct = midPrice > 0 ? (gridSpacing / midPrice) * 100 : 0;
+
+    return {
+      gridId,
+      totalPnl,
+      totalPnlPct,
+      gridPnl,
+      trendPnl,
+      fundingPnl,
+      aprGrid: Math.round(aprGrid * 100) / 100,
+      aprTotal: Math.round(aprTotal * 100) / 100,
+      rounds24h,
+      roundsTotal: grid.tradeCount,
+      profitPerGridPct: Math.round(profitPerGridPct * 100) / 100,
+      daysActive: Math.round(daysActive * 10) / 10,
+    };
+  }
+
+  /** Get all orders for a grid (Pionex "Colocadas" tab) */
+  async getOrders(gridId: string, status?: string) {
+    return this.prisma.gridOrder.findMany({
+      where: { gridId, ...(status ? { status } : {}) },
+      orderBy: { price: 'asc' },
+    });
+  }
+
+  /** Get completed trades for a grid (Pionex "Transacciones" tab) */
+  async getTrades(gridId: string) {
+    return this.prisma.gridTrade.findMany({
+      where: { gridId },
+      orderBy: { timestamp: 'desc' },
+      take: 100,
+    });
+  }
+
+  /** Get funding payment history (Pionex "Historial de financiación") */
+  async getFundingHistory(gridId: string) {
+    return this.prisma.fundingPayment.findMany({
+      where: { gridId },
+      orderBy: { timestamp: 'desc' },
+    });
+  }
+
+  /** Get PnL snapshots for chart */
+  async getPnlSnapshots(gridId: string) {
+    return this.prisma.pnlSnapshot.findMany({
+      where: { gridId },
+      orderBy: { timestamp: 'asc' },
+      take: 500,
     });
   }
 
