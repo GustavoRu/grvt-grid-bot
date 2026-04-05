@@ -43,7 +43,7 @@ export interface GrvtOrderRequest {
   type: 'limit' | 'market';
   price?: number;
   size: number;
-  timeInForce?: 'GTC' | 'IOC' | 'FOK';
+  timeInForce?: 'GTT' | 'IOC' | 'FOK';
   reduceOnly?: boolean;
   postOnly?: boolean;
 }

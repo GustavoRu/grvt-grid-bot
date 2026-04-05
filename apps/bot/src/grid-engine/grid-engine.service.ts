@@ -105,8 +105,9 @@ export class GridEngineService {
       // Subscribe to market data
       this.marketData.subscribe(config.instrument);
 
-      // Calculate grid levels
-      const levels = GridCalculator.calculateLevels(config);
+      // Calculate grid levels — fetch exchange min order size to clamp small orders
+      const minOrderSize = await this.exchange.getMinOrderSize(config.instrument);
+      const levels = GridCalculator.calculateLevels(config, minOrderSize);
       const { buyLevels, sellLevels } = GridCalculator.splitLevelsByPrice(levels, currentPrice);
 
       this.logger.log(
@@ -245,7 +246,7 @@ export class GridEngineService {
           type: 'limit',
           price: level.price,
           size: level.orderSize,
-          timeInForce: 'GTC',
+          timeInForce: 'GTT',
           postOnly: true,
         });
 
@@ -287,7 +288,7 @@ export class GridEngineService {
         type: 'limit',
         price: counterLevel.price,
         size: counterLevel.orderSize,
-        timeInForce: 'GTC',
+        timeInForce: 'GTT',
         postOnly: true,
       });
 

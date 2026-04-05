@@ -72,11 +72,22 @@ export class GrvtExchangeService implements OnModuleInit {
     };
   }
 
+  /** Get minimum order size for an instrument */
+  async getMinOrderSize(instrument: string): Promise<number> {
+    const markets = await this.exchange.loadMarkets();
+    const symbol = this.toSymbol(instrument);
+    const market = markets[symbol];
+    return (market?.limits?.amount?.min as number | undefined) ?? 0;
+  }
+
   /** Place a limit order */
   async placeOrder(req: GrvtOrderRequest): Promise<GrvtOrderResponse> {
     const symbol = this.toSymbol(req.instrument);
+    // GRVT requires GTT/IOC/FOK — GTT is the GTC equivalent (needs expiry)
+    const tif = req.timeInForce ?? 'GTT';
     const params: Record<string, unknown> = {
-      timeInForce: req.timeInForce ?? 'GTC',
+      timeInForce: tif,
+      ...(tif === 'GTT' ? { expiry: Date.now() + 90 * 24 * 60 * 60 * 1000 } : {}),
       postOnly: req.postOnly ?? false,
       reduceOnly: req.reduceOnly ?? false,
     };

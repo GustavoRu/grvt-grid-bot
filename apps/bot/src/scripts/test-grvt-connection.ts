@@ -160,7 +160,7 @@ async function main() {
         'buy',
         testSize,
         testPrice,
-        { timeInForce: 'GTC', postOnly: true },
+        { timeInForce: 'GTT', expiry: Date.now() + 10 * 60 * 1000 }, // 10 min expiry for test
       );
 
       console.log(`✅ Order placed!`);
