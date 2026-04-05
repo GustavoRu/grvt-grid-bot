@@ -5,8 +5,10 @@ export class GridCalculator {
    * Calculate all grid levels for a given config.
    * Returns an array of levels from bottom (index 0) to top (index gridCount).
    * The grid has gridCount+1 price points but gridCount intervals.
+   *
+   * @param minOrderSize - exchange minimum order size (e.g. 0.001 for BTC on GRVT)
    */
-  static calculateLevels(config: GridConfig): GridLevel[] {
+  static calculateLevels(config: GridConfig, minOrderSize = 0): GridLevel[] {
     const { upperPrice, lowerPrice, gridCount, gridType, investmentAmount, leverage } = config;
 
     if (upperPrice <= lowerPrice) throw new Error('upperPrice must be greater than lowerPrice');
@@ -17,15 +19,29 @@ export class GridCalculator {
       ? this.arithmeticPrices(lowerPrice, upperPrice, gridCount)
       : this.geometricPrices(lowerPrice, upperPrice, gridCount);
 
-    // Investment per grid interval (we split investment evenly across all buy levels)
-    // In a grid bot, roughly half the investment is in buy orders, half in sell orders
+    // Investment per grid interval split evenly across all levels
     const capitalPerGrid = (investmentAmount * leverage) / gridCount;
 
-    return prices.map((price, index) => ({
+    const levels = prices.map((price, index) => ({
       index,
       price: this.roundPrice(price),
       orderSize: this.roundSize(capitalPerGrid / price),
     }));
+
+    // Validate minimum order size
+    if (minOrderSize > 0) {
+      const tooSmall = levels.filter((l) => l.orderSize < minOrderSize);
+      if (tooSmall.length > 0) {
+        const midPrice = (upperPrice + lowerPrice) / 2;
+        const minInvestment = Math.ceil((minOrderSize * midPrice * gridCount) / leverage);
+        throw new Error(
+          `Order size ${tooSmall[0].orderSize} is below exchange minimum ${minOrderSize}. ` +
+          `Minimum investment for ${gridCount} grids at this price: ~$${minInvestment} USDT`,
+        );
+      }
+    }
+
+    return levels;
   }
 
   /**

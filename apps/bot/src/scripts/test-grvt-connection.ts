@@ -89,17 +89,31 @@ async function main() {
   // ─── 5. Calculate grid levels ─────────────────────────────
   console.log(`\n🔢 Calculating grid levels…`);
   const priceOffset = currentPrice * 0.03; // ±3% from current price
+  const GRID_COUNT = 10;
+
+  // Fetch minimum order size from market info
+  const markets = exchange.markets ?? {};
+  const marketInfo = markets['BTC/USDT:USDT'];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const minOrderSize: number = (marketInfo as any)?.limits?.amount?.min ?? 0.001;
+  // Minimum investment to satisfy exchange minimum: minSize × midPrice × grids / leverage
+  const minInvestment = Math.ceil((minOrderSize * currentPrice * GRID_COUNT) / 2);
+  const investmentAmount = Math.max(500, minInvestment); // use at least $500 for test
+
   const config = {
     instrument: INSTRUMENT,
     upperPrice: Math.round(currentPrice + priceOffset),
     lowerPrice: Math.round(currentPrice - priceOffset),
-    gridCount: 10,
+    gridCount: GRID_COUNT,
     gridType: 'arithmetic' as const,
     leverage: 2,
-    investmentAmount: 100, // $100 USDT
+    investmentAmount,
   };
 
-  const levels = GridCalculator.calculateLevels(config);
+  console.log(`   Min order size: ${minOrderSize} BTC | Min investment for ${GRID_COUNT} grids: ~$${minInvestment}`);
+  console.log(`   Using investment: $${investmentAmount} USDT`);
+
+  const levels = GridCalculator.calculateLevels(config, minOrderSize);
   const { buyLevels, sellLevels } = GridCalculator.splitLevelsByPrice(levels, currentPrice);
   const profitPerGrid = GridCalculator.calculateGridProfit(config);
 
@@ -131,7 +145,8 @@ async function main() {
   // ─── 7. (Optional) Place test order ──────────────────────
   if (PLACE_ORDER) {
     const testPrice = Math.round(currentPrice * 0.97); // 3% below market
-    const testSize = levels[0].orderSize;
+    // Use max(level size, minOrderSize) to ensure we meet exchange minimums
+    const testSize = Math.max(levels[0].orderSize, minOrderSize);
 
     console.log(`\n📝 Placing test limit BUY order: ${testSize} BTC @ $${testPrice.toLocaleString()}…`);
     try {
