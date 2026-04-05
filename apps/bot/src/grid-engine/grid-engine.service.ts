@@ -331,6 +331,15 @@ export class GridEngineService {
       }
     }
 
+    // Don't duplicate: if there's already an open order at this level/side, skip
+    const existing = await this.prisma.gridOrder.findFirst({
+      where: { gridId: active.grid.id, gridLevel: counterLevel.index, side, status: 'open' },
+    });
+    if (existing) {
+      this.logger.debug(`Counter ${side} @ ${counterLevel.price} already open (${existing.grvtOrderId}) — skipping`);
+      return;
+    }
+
     try {
       const response = await this.exchange.placeOrder({
         instrument: active.grid.instrument,
