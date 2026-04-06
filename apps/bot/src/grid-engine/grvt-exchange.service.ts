@@ -29,6 +29,9 @@ export class GrvtExchangeService implements OnModuleInit {
       options: {
         accountId: subAccountId,
         defaultType: 'swap',
+        // CCXT default is 30s — far too short for grid orders.
+        // GRVT maximum signature expiry is 30 days (2,592,000 seconds).
+        expirationSeconds: 2592000,
       },
     });
 
