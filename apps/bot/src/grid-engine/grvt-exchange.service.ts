@@ -161,6 +161,13 @@ export class GrvtExchangeService implements OnModuleInit {
     return this.exchange.fetchOrder(orderId, symbol);
   }
 
+  /** Fetch recent closed/cancelled orders — used to detect fills during initial placement */
+  async getRecentOrders(instrument: string) {
+    const symbol = this.toSymbol(instrument);
+    // Fetch last 50 orders (open + closed) to find recently filled ones
+    return this.exchange.fetchOrders(symbol, undefined, 50);
+  }
+
   /** Fetch current position for an instrument */
   async getPosition(instrument: string) {
     const symbol = this.toSymbol(instrument);

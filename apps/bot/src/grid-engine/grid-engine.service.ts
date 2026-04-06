@@ -403,12 +403,35 @@ export class GridEngineService {
           orderMap.set(match.id, { ...dbOrder, grvtOrderId: match.id, status: 'open' });
           exchangeByKey.delete(key); // prevent double-matching
         } else {
-          // Not found on exchange (GRVT cancelled it — order limit or rejection)
-          await this.prisma.gridOrder.update({
-            where: { id: dbOrder.id },
-            data: { status: 'cancelled' },
+          // Not found in open orders — could be filled during placement or truly cancelled.
+          // Fetch individual order history to distinguish.
+          // We don't have the real orderId yet, so search recent closed orders by price+side.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const recentOrders: any[] = await this.exchange.getRecentOrders(grid.instrument);
+          const recentMatch = recentOrders.find((o) => {
+            const key = `${o.side}@${parseFloat(o.price).toFixed(1)}`;
+            return key === `${dbOrder.side}@${dbOrder.price.toFixed(1)}` && o.status === 'closed';
           });
-          this.logger.debug(`Order ${dbOrder.side} @ ${dbOrder.price} not found on exchange after placement — marked cancelled`);
+
+          if (recentMatch?.id) {
+            // Order filled during the placement window — treat as fill
+            const filledPrice = parseFloat(recentMatch.average ?? recentMatch.price ?? dbOrder.price);
+            this.logger.log(`Order ${dbOrder.side} @ ${dbOrder.price} filled during placement @ ${filledPrice} — triggering counter`);
+            await this.prisma.gridOrder.update({
+              where: { id: dbOrder.id },
+              data: { grvtOrderId: recentMatch.id, status: 'filled', filledPrice, filledAt: new Date() },
+            });
+            // Temporarily add to orderMap so onOrderFilled can find it
+            const filledDbOrder = { ...dbOrder, grvtOrderId: recentMatch.id, status: 'filled' };
+            await this.onOrderFilled(recentMatch.id, filledPrice);
+          } else {
+            // Truly cancelled (order limit, rejection, etc)
+            await this.prisma.gridOrder.update({
+              where: { id: dbOrder.id },
+              data: { status: 'cancelled' },
+            });
+            this.logger.debug(`Order ${dbOrder.side} @ ${dbOrder.price} cancelled by exchange`);
+          }
         }
       }
 
