@@ -263,20 +263,40 @@ export class GridEngineService {
         `Grid levels: ${levels.length} total, ${buyLevels.length} buys, ${sellLevels.length} sells at price ${currentPrice}`,
       );
 
-      // GRVT limits open orders per instrument per sub-account (Tier 1 = 20).
-      // Only activate the N/2 buy levels closest to current price (highest prices)
-      // and N/2 sell levels closest to current price (lowest prices).
+      // Direction determines which initial orders to place:
+      //
+      //  long    → only BUY orders below current price. Sells are placed only after
+      //            a buy fills (counter order), so there is never net short exposure.
+      //            This mirrors how Pionex "Largo" futures grid works.
+      //
+      //  short   → only SELL orders above current price. Buys only as counter orders.
+      //
+      //  neutral → both sides (current Pionex "Neutral" behavior). Sells above can
+      //            open short exposure when filled before paired buys exist.
+      //
+      // GRVT limits open orders per instrument (Tier 1 = 20).
+      const direction = config.direction ?? 'long';
       const slotsPerSide = Math.floor(MAX_OPEN_ORDERS / 2);
-      const activeBuys = buyLevels.slice(-slotsPerSide);  // nearest buys = highest prices
-      const activeSells = sellLevels.slice(0, slotsPerSide); // nearest sells = lowest prices
+
+      const activeBuys: GridLevel[] = direction !== 'short'
+        ? buyLevels.slice(-MAX_OPEN_ORDERS)        // long/neutral: up to 20 buys below price
+        : [];
+      const activeSells: GridLevel[] = direction !== 'long'
+        ? sellLevels.slice(0, MAX_OPEN_ORDERS)     // short/neutral: up to 20 sells above price
+        : [];
+
+      // For neutral, cap each side to slotsPerSide so total stays within MAX_OPEN_ORDERS
+      const finalBuys  = direction === 'neutral' ? activeBuys.slice(-slotsPerSide)  : activeBuys;
+      const finalSells = direction === 'neutral' ? activeSells.slice(0, slotsPerSide) : activeSells;
+
       this.logger.log(
-        `Order window: ${activeBuys.length} buys (${activeBuys[0]?.price}–${activeBuys.at(-1)?.price}) + ` +
-        `${activeSells.length} sells (${activeSells[0]?.price}–${activeSells.at(-1)?.price}) [limit: ${MAX_OPEN_ORDERS}]`,
+        `Order window [${direction}]: ${finalBuys.length} buys (${finalBuys[0]?.price}–${finalBuys.at(-1)?.price}) + ` +
+        `${finalSells.length} sells (${finalSells[0]?.price}–${finalSells.at(-1)?.price}) [limit: ${MAX_OPEN_ORDERS}]`,
       );
 
       // Place initial orders
       const orderMap = new Map<string, GridOrder>();
-      await this.placeInitialOrders(grid, activeBuys, activeSells, orderMap);
+      await this.placeInitialOrders(grid, finalBuys, finalSells, orderMap);
 
       // Activate grid — set entryPrice = currentPrice at start (Pionex "Precio inicial")
       const activeGrid = await this.prisma.grid.update({
@@ -284,9 +304,11 @@ export class GridEngineService {
         data: { status: 'active', currentPrice, entryPrice: currentPrice },
       });
 
-      // Track the active window boundaries so the sliding window knows what to shift
-      const windowLow = activeBuys[0]?.index ?? 0;
-      const windowHigh = activeSells.at(-1)?.index ?? levels.length - 1;
+      // Track the active window boundaries so the sliding window knows what to shift.
+      // For long: window only covers buy side initially; sells get added as fills come in.
+      // For short: window only covers sell side initially.
+      const windowLow  = finalBuys[0]?.index  ?? (finalSells[0]?.index ?? 0);
+      const windowHigh = finalSells.at(-1)?.index ?? (finalBuys.at(-1)?.index ?? levels.length - 1);
 
       this.activeGrids.set(grid.id, { grid: activeGrid, levels, orderMap, windowLow, windowHigh, rebalancing: false });
       this.logger.log(`✅ Grid ${grid.id} active with ${orderMap.size} orders (window: levels ${windowLow}–${windowHigh})`);
@@ -811,24 +833,41 @@ export class GridEngineService {
    * so it's a no-op on most price ticks.
    */
   private async rebalanceWindow(gridId: string, active: ActiveGrid, currentPrice: number): Promise<void> {
+    const direction = active.grid.direction ?? 'long';
     const slotsPerSide = Math.floor(MAX_OPEN_ORDERS / 2);
 
-    // Find the first level index >= currentPrice (the boundary between buys and sells)
+    // Find the first level index >= currentPrice (buy/sell boundary)
     const midIndex = active.levels.findIndex((l) => l.price >= currentPrice);
-    if (midIndex < 0) return; // price above all levels — nothing to do
+    if (midIndex < 0) return;
 
-    // Ideal window: slotsPerSide buys below mid, slotsPerSide sells above mid
-    const idealLow  = Math.max(0, midIndex - slotsPerSide);
-    const idealHigh = Math.min(active.levels.length - 1, midIndex + slotsPerSide - 1);
+    // Ideal window boundaries depend on direction:
+    //  long:    only buy orders → track low side, no sell sliding
+    //  short:   only sell orders → track high side, no buy sliding
+    //  neutral: both sides centered around price
+    let idealLow: number;
+    let idealHigh: number;
 
-    // No shift needed
+    if (direction === 'long') {
+      // Keep up to MAX_OPEN_ORDERS buys below the price; no sliding sells
+      idealLow  = Math.max(0, midIndex - MAX_OPEN_ORDERS);
+      idealHigh = midIndex - 1; // sells not managed by window (counter-orders only)
+    } else if (direction === 'short') {
+      // Keep up to MAX_OPEN_ORDERS sells above the price; no sliding buys
+      idealLow  = midIndex;     // buys not managed by window
+      idealHigh = Math.min(active.levels.length - 1, midIndex + MAX_OPEN_ORDERS - 1);
+    } else {
+      // neutral: symmetric window
+      idealLow  = Math.max(0, midIndex - slotsPerSide);
+      idealHigh = Math.min(active.levels.length - 1, midIndex + slotsPerSide - 1);
+    }
+
     if (idealLow === active.windowLow && idealHigh === active.windowHigh) return;
 
     this.logger.debug(
-      `Sliding window shift: [${active.windowLow}–${active.windowHigh}] → [${idealLow}–${idealHigh}] at price ${currentPrice}`,
+      `Sliding window [${direction}] shift: [${active.windowLow}–${active.windowHigh}] → [${idealLow}–${idealHigh}] at price ${currentPrice}`,
     );
 
-    // Shift UP: price moved up → drop stale low buys, add new high sells
+    // Shift UP: price moved up → drop stale low buys, add new high sells (neutral only)
     while (active.windowLow < idealLow) {
       const cancelIndex = active.windowLow;
       const cancelLevel = active.levels[cancelIndex];
@@ -844,15 +883,17 @@ export class GridEngineService {
       }
       active.windowLow++;
 
-      // Place new sell at the top of the window
-      const newHighIndex = active.windowHigh + 1;
-      if (newHighIndex < active.levels.length) {
-        await this.placeWindowOrder(active, newHighIndex, 'sell');
-        active.windowHigh = newHighIndex;
+      // For neutral only: add a sell at the top
+      if (direction === 'neutral') {
+        const newHighIndex = active.windowHigh + 1;
+        if (newHighIndex < active.levels.length) {
+          await this.placeWindowOrder(active, newHighIndex, 'sell');
+          active.windowHigh = newHighIndex;
+        }
       }
     }
 
-    // Shift DOWN: price moved down → drop stale high sells, add new low buys
+    // Shift DOWN: price moved down → drop stale high sells, add new low buys (neutral only)
     while (active.windowHigh > idealHigh) {
       const cancelIndex = active.windowHigh;
       const cancelLevel = active.levels[cancelIndex];
@@ -868,11 +909,35 @@ export class GridEngineService {
       }
       active.windowHigh--;
 
-      // Place new buy at the bottom of the window
-      const newLowIndex = active.windowLow - 1;
-      if (newLowIndex >= 0) {
-        await this.placeWindowOrder(active, newLowIndex, 'buy');
-        active.windowLow = newLowIndex;
+      // For neutral only: add a buy at the bottom
+      if (direction === 'neutral') {
+        const newLowIndex = active.windowLow - 1;
+        if (newLowIndex >= 0) {
+          await this.placeWindowOrder(active, newLowIndex, 'buy');
+          active.windowLow = newLowIndex;
+        }
+      }
+    }
+
+    // For long: when price moves down, ensure we have buy coverage up to MAX_OPEN_ORDERS
+    if (direction === 'long') {
+      while (active.windowLow > idealLow) {
+        const newLowIndex = active.windowLow - 1;
+        if (newLowIndex >= 0) {
+          await this.placeWindowOrder(active, newLowIndex, 'buy');
+          active.windowLow = newLowIndex;
+        } else break;
+      }
+    }
+
+    // For short: when price moves up, ensure we have sell coverage up to MAX_OPEN_ORDERS
+    if (direction === 'short') {
+      while (active.windowHigh < idealHigh) {
+        const newHighIndex = active.windowHigh + 1;
+        if (newHighIndex < active.levels.length) {
+          await this.placeWindowOrder(active, newHighIndex, 'sell');
+          active.windowHigh = newHighIndex;
+        } else break;
       }
     }
   }
