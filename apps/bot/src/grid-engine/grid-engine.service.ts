@@ -280,10 +280,29 @@ export class GridEngineService {
           if (!openOrderIds.has(id)) {
             if (this.processingFills.has(id)) continue; // already being processed
             this.processingFills.add(id);
-            this.logger.debug(`Order ${id} no longer open — assuming filled`);
-            this.onOrderFilled(id, dbOrder.price)
-              .finally(() => this.processingFills.delete(id))
-              .catch((err) => this.logger.error(`Fill processing error for ${id}`, err));
+
+            // Fetch actual order status: distinguish fill (closed) from cancel
+            this.exchange.getOrder(id, active.grid.instrument)
+              .then(async (order) => {
+                if (order.status === 'closed') {
+                  const filledPrice = (order.average ?? order.price ?? dbOrder.price) as number;
+                  this.logger.debug(`Order ${id} filled @ ${filledPrice}`);
+                  await this.onOrderFilled(id, filledPrice);
+                } else {
+                  // cancelled / rejected by exchange — mark in DB, no counter order
+                  this.logger.debug(`Order ${id} status=${order.status} — marking cancelled, no counter`);
+                  await this.prisma.gridOrder.update({
+                    where: { id: dbOrder.id },
+                    data: { status: 'cancelled' },
+                  });
+                }
+              })
+              .catch(async (err) => {
+                // fetchOrder failed (order may be truly gone) — fall back to fill assumption
+                this.logger.warn(`Could not fetch order ${id} — assuming filled`, err);
+                await this.onOrderFilled(id, dbOrder.price);
+              })
+              .finally(() => this.processingFills.delete(id));
           }
         }
       } catch (err) {

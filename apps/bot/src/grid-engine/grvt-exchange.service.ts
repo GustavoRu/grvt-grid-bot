@@ -152,6 +152,12 @@ export class GrvtExchangeService implements OnModuleInit {
     return this.exchange.fetchOpenOrders(symbol);
   }
 
+  /** Fetch a single order by ID — used to distinguish fill vs cancel */
+  async getOrder(orderId: string, instrument: string) {
+    const symbol = this.toSymbol(instrument);
+    return this.exchange.fetchOrder(orderId, symbol);
+  }
+
   /** Fetch current position for an instrument */
   async getPosition(instrument: string) {
     const symbol = this.toSymbol(instrument);
