@@ -8,7 +8,7 @@ import type {
   PnlSnapshot,
 } from '@grvt-grid-bot/shared';
 
-const BOT_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const BOT_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4001';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BOT_URL}${path}`, {

@@ -10,7 +10,7 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
   app.enableCors();
 
-  const port = process.env.BOT_PORT ?? 3001;
+  const port = process.env.BOT_PORT ?? 4001;
   await app.listen(port);
   Logger.log(`🤖 GRVT Grid Bot running on port ${port}`, 'Bootstrap');
 }
