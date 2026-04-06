@@ -285,16 +285,20 @@ export class GridEngineService {
             this.exchange.getOrder(id, active.grid.instrument)
               .then(async (order) => {
                 if (order.status === 'closed') {
+                  // GRVT FILLED → ccxt 'closed'
                   const filledPrice = (order.average ?? order.price ?? dbOrder.price) as number;
                   this.logger.debug(`Order ${id} filled @ ${filledPrice}`);
                   await this.onOrderFilled(id, filledPrice);
-                } else {
-                  // cancelled / rejected by exchange — mark in DB, no counter order
+                } else if (order.status === 'canceled' || order.status === 'rejected' || order.status === 'expired') {
+                  // Cancelled/rejected by exchange — mark in DB, no counter order
                   this.logger.debug(`Order ${id} status=${order.status} — marking cancelled, no counter`);
                   await this.prisma.gridOrder.update({
                     where: { id: dbOrder.id },
                     data: { status: 'cancelled' },
                   });
+                } else {
+                  // 'open' or 'pending' — still live, getOpenOrders may have been stale
+                  this.logger.debug(`Order ${id} status=${order.status} — still live, ignoring`);
                 }
               })
               .catch(async (err) => {
