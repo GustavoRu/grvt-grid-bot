@@ -72,10 +72,12 @@ export class GridEngineService {
     private readonly marketData: MarketDataService,
     private readonly exchange: GrvtExchangeService,
   ) {
-    // Listen to price updates to trigger stop-loss checks
+    // Listen to price updates to trigger stop-loss / sliding window
     this.marketData.on('price', (update) => this.onPriceUpdate(update));
     // Clean up orphaned orders from failed/error grids on startup
-    this.pruneStaleOrders().catch(() => {});
+    this.pruneStaleOrders()
+      .then(() => this.recoverActiveGrids())
+      .catch((err) => this.logger.error('Startup recovery failed', err));
   }
 
   /** Remove open orders in DB that belong to grids in error/stopped state.
@@ -89,6 +91,119 @@ export class GridEngineService {
     });
     if (result.count > 0) {
       this.logger.log(`Pruned ${result.count} stale orders from non-active grids`);
+    }
+  }
+
+  /**
+   * On startup, reload any grids that were 'active' when the process died.
+   * For each:
+   *   1. Recalculate grid levels from stored config
+   *   2. Fetch currently open orders from exchange
+   *   3. Rebuild orderMap and window boundaries
+   *   4. Re-subscribe to market data so the sliding window keeps running
+   *
+   * Orders that are open on exchange but missing from DB (e.g. placed before crash
+   * and not yet reconciled) are cancelled to avoid ghost positions.
+   */
+  private async recoverActiveGrids(): Promise<void> {
+    const activeGrids = await this.prisma.grid.findMany({
+      where: { status: 'active' },
+    });
+
+    if (activeGrids.length === 0) return;
+    this.logger.log(`Recovering ${activeGrids.length} active grid(s) from DB…`);
+
+    for (const grid of activeGrids) {
+      try {
+        const config: GridConfig = {
+          instrument: grid.instrument,
+          upperPrice: grid.upperPrice,
+          lowerPrice: grid.lowerPrice,
+          gridCount: grid.gridCount,
+          gridType: grid.gridType as 'arithmetic' | 'geometric',
+          direction: grid.direction as 'long' | 'short' | 'neutral',
+          leverage: grid.leverage,
+          investmentAmount: grid.investmentAmount,
+          stopLoss: grid.stopLoss ?? undefined,
+          takeProfit: grid.takeProfit ?? undefined,
+        };
+
+        // Recalculate levels (same deterministic formula)
+        const { minAmount, minNotional } = await this.exchange.getMarketLimits(grid.instrument);
+        const levels = GridCalculator.calculateLevels(config, minAmount, minNotional);
+
+        // Fetch what's actually open on exchange right now
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const openOrders: any[] = await this.exchange.getOpenOrders(grid.instrument);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const exchangeByKey = new Map<string, any>();
+        for (const o of openOrders) {
+          const key = `${o.side}@${parseFloat(o.price).toFixed(1)}`;
+          exchangeByKey.set(key, o);
+        }
+
+        // Fetch DB open orders for this grid
+        const dbOpenOrders = await this.prisma.gridOrder.findMany({
+          where: { gridId: grid.id, status: { in: ['open', 'pending'] } },
+        });
+
+        // Rebuild orderMap: match DB orders to exchange orders
+        const orderMap = new Map<string, GridOrder>();
+        for (const dbOrder of dbOpenOrders) {
+          const key = `${dbOrder.side}@${dbOrder.price.toFixed(1)}`;
+          const match = exchangeByKey.get(key);
+          if (match?.id && !/^0x0+$/.test(match.id)) {
+            // Update DB with real ID if it was null (pending before crash)
+            if (!dbOrder.grvtOrderId || dbOrder.grvtOrderId !== match.id) {
+              await this.prisma.gridOrder.update({
+                where: { id: dbOrder.id },
+                data: { grvtOrderId: match.id, status: 'open' },
+              });
+            }
+            orderMap.set(match.id, { ...dbOrder, grvtOrderId: match.id, status: 'open' });
+            exchangeByKey.delete(key);
+          } else {
+            // Not on exchange — mark as cancelled in DB
+            await this.prisma.gridOrder.update({
+              where: { id: dbOrder.id },
+              data: { status: 'cancelled' },
+            });
+          }
+        }
+
+        // Any exchange orders not matched to DB records are unknown — cancel them
+        for (const [key, o] of exchangeByKey) {
+          this.logger.warn(`Recovery: unknown exchange order ${o.id} @ ${key} — cancelling`);
+          await this.exchange.cancelOrder(o.id, grid.instrument).catch(() => {});
+        }
+
+        // Recompute window boundaries from current open orders
+        const openLevels = [...orderMap.values()].map((o) => o.gridLevel);
+        const windowLow  = openLevels.length > 0 ? Math.min(...openLevels) : 0;
+        const windowHigh = openLevels.length > 0 ? Math.max(...openLevels) : levels.length - 1;
+
+        // Re-subscribe to market data
+        this.marketData.subscribe(grid.instrument);
+
+        this.activeGrids.set(grid.id, {
+          grid,
+          levels,
+          orderMap,
+          windowLow,
+          windowHigh,
+          rebalancing: false,
+        });
+
+        this.logger.log(
+          `Recovered grid ${grid.id}: ${orderMap.size} orders active (window ${windowLow}–${windowHigh})`,
+        );
+
+        // Immediately rebalance window to fill any gaps left by the downtime
+        const ticker = await this.exchange.getTicker(grid.instrument);
+        await this.rebalanceWindow(grid.id, this.activeGrids.get(grid.id)!, ticker.markPrice);
+      } catch (err) {
+        this.logger.error(`Failed to recover grid ${grid.id}`, err);
+      }
     }
   }
 
