@@ -1,0 +1,18 @@
+# Dependencies (reinstalled inside Docker)
+node_modules
+**/node_modules
+
+# Build outputs (rebuilt inside Docker)
+**/dist
+**/.next
+
+# Local env files (secrets — inject via Railway env vars instead)
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Dev/tooling noise
+.git
+.turbo
+**/*.log
+**/logs
