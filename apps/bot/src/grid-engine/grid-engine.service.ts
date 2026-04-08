@@ -147,6 +147,19 @@ export class GridEngineService {
           where: { gridId: grid.id, status: { in: ['open', 'pending'] } },
         });
 
+        // Fetch recent order history ONCE to detect fills that occurred during downtime.
+        // Orders that filled while the bot was down won't appear in fetchOpenOrders.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const recentOrders: any[] = await this.exchange.getRecentOrders(grid.instrument).catch(() => []);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const recentFillsByKey = new Map<string, any>();
+        for (const o of recentOrders) {
+          if (o.status === 'closed') {
+            const rKey = `${o.side as string}@${parseFloat(o.price as string).toFixed(1)}`;
+            if (!recentFillsByKey.has(rKey)) recentFillsByKey.set(rKey, o); // keep most recent per level
+          }
+        }
+
         // Rebuild orderMap: match DB orders to exchange orders
         const orderMap = new Map<string, GridOrder>();
         for (const dbOrder of dbOpenOrders) {
@@ -163,11 +176,22 @@ export class GridEngineService {
             orderMap.set(match.id, { ...dbOrder, grvtOrderId: match.id, status: 'open' });
             exchangeByKey.delete(key);
           } else {
-            // Not on exchange — mark as cancelled in DB
-            await this.prisma.gridOrder.update({
-              where: { id: dbOrder.id },
-              data: { status: 'cancelled' },
-            });
+            // Not in open orders — check if it filled during downtime before marking cancelled.
+            // If marked 'cancelled', recordTradeProfit can't pair it with its counter order later.
+            const recentFill = recentFillsByKey.get(key);
+            if (recentFill?.id) {
+              const filledPrice = parseFloat(recentFill.average ?? recentFill.price ?? String(dbOrder.price));
+              await this.prisma.gridOrder.update({
+                where: { id: dbOrder.id },
+                data: { status: 'filled', filledAt: new Date(), filledPrice, grvtOrderId: recentFill.id as string },
+              });
+              this.logger.log(`Recovery: ${dbOrder.side}@${dbOrder.price} filled during downtime @ ${filledPrice}`);
+            } else {
+              await this.prisma.gridOrder.update({
+                where: { id: dbOrder.id },
+                data: { status: 'cancelled' },
+              });
+            }
           }
         }
 
@@ -395,6 +419,14 @@ export class GridEngineService {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const openOrders: any[] = await this.exchange.getOpenOrders(active.grid.instrument);
         const openOrderIds = new Set(openOrders.map((o) => o.id as string));
+        // Index by side@price for reconciling 0x00 orders (counter/window orders get 0x00 until
+        // GRVT assigns the real hash asynchronously — same issue as initial placement)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const openByKey = new Map<string, any>();
+        for (const o of openOrders) {
+          const key = `${o.side as string}@${parseFloat(o.price as string).toFixed(1)}`;
+          openByKey.set(key, o);
+        }
 
         // Find DB orders confirmed open (with real IDs) → check if they filled or were cancelled
         // 'pending' orders are still being reconciled — don't poll them yet
@@ -403,15 +435,24 @@ export class GridEngineService {
         });
 
         for (const dbOrder of dbOpenOrders) {
-          // Skip placeholder IDs returned by CCXT when an order was rejected
-          // (e.g. "0x00" or "0x0000000000000000000000000000000000000000000000000000000000000000")
           const id = dbOrder.grvtOrderId;
+          // Counter/window orders return 0x00 from GRVT until the hash is assigned async.
+          // Reconcile by matching side@price in the already-fetched open orders list.
           if (!id || /^0x0+$/.test(id)) {
-            this.logger.debug(`Skipping invalid order ID ${id} — marking as error`);
-            await this.prisma.gridOrder.update({
-              where: { id: dbOrder.id },
-              data: { status: 'error' },
-            });
+            const key = `${dbOrder.side}@${dbOrder.price.toFixed(1)}`;
+            const match = openByKey.get(key);
+            if (match?.id && !/^0x0+$/.test(match.id as string)) {
+              await this.prisma.gridOrder.update({
+                where: { id: dbOrder.id },
+                data: { grvtOrderId: match.id as string, status: 'open' },
+              });
+              active.orderMap.set(match.id as string, { ...dbOrder, grvtOrderId: match.id as string });
+              this.logger.debug(`Reconciled 0x00 → ${match.id as string} for ${dbOrder.side}@${dbOrder.price}`);
+            } else {
+              // Truly gone from exchange (filled or rejected before we could reconcile)
+              await this.prisma.gridOrder.update({ where: { id: dbOrder.id }, data: { status: 'error' } });
+              this.logger.debug(`Could not reconcile 0x00 for ${dbOrder.side}@${dbOrder.price} — marking error`);
+            }
             continue;
           }
           if (!openOrderIds.has(id)) {
@@ -449,6 +490,39 @@ export class GridEngineService {
       } catch (err) {
         this.logger.warn(`Error polling fills for grid ${gridId}`, err);
       }
+    }
+  }
+
+  /**
+   * Poll the exchange position every 30s to keep unrealizedPnl current in DB.
+   * This is the primary source for "Trend PnL" in the dashboard — it reflects the
+   * mark-to-market value of open long/short exposure held by the grid.
+   */
+  @Interval(30000)
+  async pollPositionPnl(): Promise<void> {
+    for (const [gridId, active] of this.activeGrids) {
+      try {
+        const position = await this.exchange.getPosition(active.grid.instrument);
+        // CCXT normalises unrealizedPnl across exchanges
+        const unrealizedPnl: number = position ? ((position.unrealizedPnl as number) ?? 0) : 0;
+
+        if (Math.abs(unrealizedPnl - (active.grid.unrealizedPnl ?? 0)) > 0.01) {
+          await this.prisma.grid.update({ where: { id: gridId }, data: { unrealizedPnl } });
+          active.grid = { ...active.grid, unrealizedPnl };
+          await this.snapshotPnl(gridId);
+          this.logger.debug(`Position PnL updated for grid ${gridId}: $${unrealizedPnl.toFixed(2)}`);
+        }
+      } catch (err) {
+        this.logger.warn(`Failed to poll position PnL for grid ${gridId}`, err);
+      }
+    }
+  }
+
+  /** Periodic PnL snapshot every 5 minutes so the chart always has data even between fills */
+  @Interval(300000)
+  async periodicPnlSnapshot(): Promise<void> {
+    for (const [gridId] of this.activeGrids) {
+      await this.snapshotPnl(gridId).catch(() => {});
     }
   }
 
@@ -806,6 +880,9 @@ export class GridEngineService {
           .finally(() => { active.rebalancing = false; });
       }
 
+      // Range drift detection: warn when price has drifted far outside the grid's defined range.
+      this.checkRangeDrift(gridId, active, price);
+
       // Stop loss check
       const stopLoss = active.grid.stopLoss;
       if (stopLoss && price <= stopLoss) {
@@ -819,6 +896,36 @@ export class GridEngineService {
         this.logger.log(`✅ Take profit triggered for grid ${gridId} at ${price} (TP: ${takeProfit})`);
         this.stopGrid(gridId).catch((err) => this.logger.error('Failed to stop grid on TP', err));
       }
+    }
+  }
+
+  /**
+   * Warns when the current price has drifted more than DRIFT_THRESHOLD outside the grid's
+   * configured lowerPrice–upperPrice range. At that point all orders are idle (no fills
+   * possible) until price returns. The warning fires at most once per drift event (tracked
+   * via the driftWarned flag on the active grid to avoid log spam on every tick).
+   */
+  private readonly driftWarnedGrids = new Set<string>();
+
+  private checkRangeDrift(gridId: string, active: ActiveGrid, price: number): void {
+    const DRIFT_THRESHOLD = 0.08; // 8% outside the declared range
+    const { lowerPrice, upperPrice } = active.grid;
+    const aboveRange = price > upperPrice * (1 + DRIFT_THRESHOLD);
+    const belowRange = price < lowerPrice * (1 - DRIFT_THRESHOLD);
+
+    if (aboveRange || belowRange) {
+      if (!this.driftWarnedGrids.has(gridId)) {
+        this.driftWarnedGrids.add(gridId);
+        const dir = aboveRange ? 'above' : 'below';
+        const bound = aboveRange ? upperPrice : lowerPrice;
+        this.logger.warn(
+          `⚠️  RANGE DRIFT [grid ${gridId}]: price ${price.toFixed(1)} is >8% ${dir} grid ${dir === 'above' ? 'ceiling' : 'floor'} ${bound}. ` +
+          `All orders are idle. Consider stopping and recreating with a wider range centered on current price.`,
+        );
+      }
+    } else {
+      // Price returned inside range — reset so the warning fires again if it drifts out again
+      this.driftWarnedGrids.delete(gridId);
     }
   }
 
@@ -837,8 +944,20 @@ export class GridEngineService {
     const slotsPerSide = Math.floor(MAX_OPEN_ORDERS / 2);
 
     // Find the first level index >= currentPrice (buy/sell boundary)
-    const midIndex = active.levels.findIndex((l) => l.price >= currentPrice);
-    if (midIndex < 0) return;
+    let midIndex = active.levels.findIndex((l) => l.price >= currentPrice);
+
+    // Price is above ALL grid levels (midIndex === -1).
+    // For LONG: treat midIndex as levels.length so idealLow/High shift to keep
+    //           the top MAX_OPEN_ORDERS buy levels active (closest to current price).
+    //           This prevents the window from freezing when ETH pumps above upperPrice.
+    // For SHORT/NEUTRAL: price left the grid range upward — nothing useful to do.
+    if (midIndex < 0) {
+      if (direction === 'long') {
+        midIndex = active.levels.length;
+      } else {
+        return;
+      }
+    }
 
     // Ideal window boundaries depend on direction:
     //  long:    only buy orders → track low side, no sell sliding
