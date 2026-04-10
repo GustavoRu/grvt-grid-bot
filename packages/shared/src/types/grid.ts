@@ -8,8 +8,10 @@ export interface GridConfig {
   direction: GridDirection; // long | short | neutral (like Pionex "Actitud")
   leverage: number; // 1-50
   investmentAmount: number; // in USDT
-  stopLoss?: number; // price — cancel all & close if hit
-  takeProfit?: number; // price — stop grid if hit
+  stopLoss?: number;      // absolute price — cancel all & close if hit
+  takeProfit?: number;    // absolute price — stop grid if hit
+  stopLossPct?: number;   // % drop from entry price (e.g. 10 = stop if price falls 10%)
+  takeProfitPct?: number; // % rise from entry price (e.g. 15 = stop if price rises 15%)
 }
 
 /**

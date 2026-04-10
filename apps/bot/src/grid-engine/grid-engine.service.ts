@@ -266,6 +266,18 @@ export class GridEngineService {
       const ticker = await this.exchange.getTicker(config.instrument);
       const currentPrice = ticker.markPrice;
 
+      // Resolve percentage-based SL/TP to absolute prices now that we have the entry price
+      const resolvedStopLoss = config.stopLoss ?? (config.stopLossPct ? currentPrice * (1 - config.stopLossPct / 100) : undefined);
+      const resolvedTakeProfit = config.takeProfit ?? (config.takeProfitPct ? currentPrice * (1 + config.takeProfitPct / 100) : undefined);
+      if (resolvedStopLoss || resolvedTakeProfit) {
+        await this.prisma.grid.update({
+          where: { id: grid.id },
+          data: { stopLoss: resolvedStopLoss, takeProfit: resolvedTakeProfit },
+        });
+        if (resolvedStopLoss) this.logger.log(`Stop loss set at $${resolvedStopLoss.toFixed(1)} (${config.stopLossPct ? config.stopLossPct + '%' : 'absolute'})`);
+        if (resolvedTakeProfit) this.logger.log(`Take profit set at $${resolvedTakeProfit.toFixed(1)} (${config.takeProfitPct ? config.takeProfitPct + '%' : 'absolute'})`);
+      }
+
       // Subscribe to market data
       this.marketData.subscribe(config.instrument);
 

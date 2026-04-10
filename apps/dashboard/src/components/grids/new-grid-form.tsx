@@ -51,7 +51,16 @@ export function NewGridForm({ onClose, onCreated }: Props) {
     investmentAmount: 100,
     stopLoss: undefined,
     takeProfit: undefined,
+    stopLossPct: undefined,
+    takeProfitPct: undefined,
   });
+
+  const [slMode, setSlMode] = useState<'price' | 'pct'>('price');
+  const [tpMode, setTpMode] = useState<'price' | 'pct'>('price');
+
+  // Estimated entry price for computing absolute price hints in % mode.
+  // Uses lowerPrice as a rough proxy until the bot fetches the real mark price.
+  const estimatedEntry = form.lowerPrice > 0 ? (form.lowerPrice + form.upperPrice) / 2 : null;
 
   const createMutation = useMutation({
     mutationFn: (config: GridConfig) => api.grids.create(config),
@@ -65,6 +74,16 @@ export function NewGridForm({ onClose, onCreated }: Props) {
 
   function setField<K extends keyof GridConfig>(key: K, value: GridConfig[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function switchSlMode(mode: 'price' | 'pct') {
+    setSlMode(mode);
+    setForm((prev) => ({ ...prev, stopLoss: undefined, stopLossPct: undefined }));
+  }
+
+  function switchTpMode(mode: 'price' | 'pct') {
+    setTpMode(mode);
+    setForm((prev) => ({ ...prev, takeProfit: undefined, takeProfitPct: undefined }));
   }
 
   return (
@@ -208,33 +227,94 @@ export function NewGridForm({ onClose, onCreated }: Props) {
 
           {/* Stop loss + take profit */}
           <div className="grid grid-cols-2 gap-3">
+            {/* Stop Loss */}
             <div>
-              <label className="block text-sm text-muted-foreground mb-1">
-                Stop Loss <span className="text-xs">(optional)</span>
-              </label>
-              <input
-                type="number"
-                value={form.stopLoss ?? ''}
-                onChange={(e) =>
-                  setField('stopLoss', e.target.value ? parseFloat(e.target.value) : undefined)
-                }
-                placeholder="Price"
-                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
-              />
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-sm text-muted-foreground">
+                  Stop Loss <span className="text-xs">(optional)</span>
+                </label>
+                <div className="flex text-xs border border-border rounded overflow-hidden">
+                  <button type="button" onClick={() => switchSlMode('price')}
+                    className={`px-2 py-0.5 ${slMode === 'price' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                    Price
+                  </button>
+                  <button type="button" onClick={() => switchSlMode('pct')}
+                    className={`px-2 py-0.5 ${slMode === 'pct' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                    %
+                  </button>
+                </div>
+              </div>
+              {slMode === 'price' ? (
+                <input type="number"
+                  value={form.stopLoss ?? ''}
+                  onChange={(e) => setField('stopLoss', e.target.value ? parseFloat(e.target.value) : undefined)}
+                  placeholder="e.g. 1900"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
+                />
+              ) : (
+                <div>
+                  <div className="flex items-center gap-2">
+                    <input type="range" min={1} max={50} step={1}
+                      value={form.stopLossPct ?? 10}
+                      onChange={(e) => setField('stopLossPct', parseInt(e.target.value))}
+                      className="flex-1 accent-red-500"
+                    />
+                    <span className="text-sm font-medium w-10 text-right text-red-400">
+                      -{form.stopLossPct ?? 10}%
+                    </span>
+                  </div>
+                  {estimatedEntry && (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      ≈ ${(estimatedEntry * (1 - (form.stopLossPct ?? 10) / 100)).toFixed(1)}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
+
+            {/* Take Profit */}
             <div>
-              <label className="block text-sm text-muted-foreground mb-1">
-                Take Profit <span className="text-xs">(optional)</span>
-              </label>
-              <input
-                type="number"
-                value={form.takeProfit ?? ''}
-                onChange={(e) =>
-                  setField('takeProfit', e.target.value ? parseFloat(e.target.value) : undefined)
-                }
-                placeholder="Price"
-                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
-              />
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-sm text-muted-foreground">
+                  Take Profit <span className="text-xs">(optional)</span>
+                </label>
+                <div className="flex text-xs border border-border rounded overflow-hidden">
+                  <button type="button" onClick={() => switchTpMode('price')}
+                    className={`px-2 py-0.5 ${tpMode === 'price' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                    Price
+                  </button>
+                  <button type="button" onClick={() => switchTpMode('pct')}
+                    className={`px-2 py-0.5 ${tpMode === 'pct' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                    %
+                  </button>
+                </div>
+              </div>
+              {tpMode === 'price' ? (
+                <input type="number"
+                  value={form.takeProfit ?? ''}
+                  onChange={(e) => setField('takeProfit', e.target.value ? parseFloat(e.target.value) : undefined)}
+                  placeholder="e.g. 2800"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
+                />
+              ) : (
+                <div>
+                  <div className="flex items-center gap-2">
+                    <input type="range" min={1} max={100} step={1}
+                      value={form.takeProfitPct ?? 20}
+                      onChange={(e) => setField('takeProfitPct', parseInt(e.target.value))}
+                      className="flex-1 accent-green-500"
+                    />
+                    <span className="text-sm font-medium w-10 text-right text-green-400">
+                      +{form.takeProfitPct ?? 20}%
+                    </span>
+                  </div>
+                  {estimatedEntry && (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      ≈ ${(estimatedEntry * (1 + (form.takeProfitPct ?? 20) / 100)).toFixed(1)}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

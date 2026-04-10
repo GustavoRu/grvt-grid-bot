@@ -8,6 +8,8 @@
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
     "typecheck": "turbo typecheck",
     "bot": "turbo dev --filter=bot",
+    "bot:overnight": "caffeinate -i pnpm bot",
+    "dev:overnight": "caffeinate -i pnpm dev",
     "dashboard": "turbo dev --filter=dashboard"
   },
   "devDependencies": {

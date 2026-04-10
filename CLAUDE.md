@@ -164,6 +164,20 @@ GRVT Tier 1 = 20 max open orders. The window keeps exactly `MAX_OPEN_ORDERS` ord
 
 ---
 
+## Running Locally Overnight (macOS only — local testing only)
+
+```bash
+pnpm bot:overnight
+```
+
+Uses `caffeinate -i` — prevents CPU/system idle sleep so the bot runs uninterrupted while
+the Mac is plugged in. The display can still lock/turn off normally (low power mode).
+
+> **This is for local testing only.** For production use, deploy via Docker to Railway or
+> another always-on host (see `apps/bot/Dockerfile`).
+
+---
+
 ## Common Debugging Checklist
 
 1. **Orders expiring 30s after placement** → check `expirationSeconds` in `grvt-exchange.service.ts`
