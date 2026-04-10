@@ -178,6 +178,54 @@ the Mac is plugged in. The display can still lock/turn off normally (low power m
 
 ---
 
+## Security Rules — Never Expose Keys
+
+These rules protect real capital. Violating them can result in account compromise or total loss of funds.
+
+### 1. Files that must NEVER be committed to git
+- `apps/bot/.env` — contains API key, private key, DB credentials
+- Any file matching `*.env`, `.env.local`, `.env.production`
+- Any file containing `GRVT_PRIVATE_KEY`, `GRVT_API_KEY`, `DATABASE_URL`
+
+The `.gitignore` already excludes `.env*`. **Never use `git add -f` or `--force` on these files.**
+
+Before every commit, verify no secrets are staged:
+```bash
+git diff --cached | grep -i "private_key\|api_key\|password\|secret"
+```
+If that returns anything — abort the commit immediately.
+
+### 2. Never hardcode secrets in source code
+- No API keys, private keys, or passwords in `.ts`, `.js`, or config files
+- No secrets in `CLAUDE.md`, `README.md`, or any tracked file
+- Always read secrets from `process.env.*` only
+
+### 3. Wallet isolation for production
+- The `GRVT_PRIVATE_KEY` is used to sign orders via EIP-712
+- **Use a dedicated wallet for the bot** — never the same wallet as your main MetaMask
+- Fund it with only what the bot needs (e.g. $250 for a $250 grid)
+- If the key is ever exposed: rotate it immediately and cancel all open orders
+
+### 4. API key permissions
+- When generating a GRVT API key for the bot, use the minimum permissions needed: **Trade only**
+- Never generate a Withdraw-enabled API key for the bot
+- If a key is compromised, revoke it in GRVT settings before the attacker can withdraw
+
+### 5. Production deployment secrets
+- On Railway/Koyeb/Render: inject secrets via the platform's **environment variables UI** — never in the Dockerfile or repo
+- The `Dockerfile` must never contain `ENV GRVT_API_KEY=...` lines
+- Supabase `DATABASE_URL` and `DIRECT_URL` are also secrets — same rules apply
+
+### 6. If you suspect a key has been exposed
+1. Immediately revoke the GRVT API key in the exchange settings
+2. Cancel all open orders from GRVT UI ("Cancel all orders")
+3. Close any open positions manually
+4. Generate new API key and rotate `GRVT_PRIVATE_KEY` with a fresh wallet
+5. Rotate `DATABASE_URL` in Supabase if the DB credentials were exposed
+6. Audit git history: `git log --all -p | grep -i "private_key\|api_key"` — if found, consider the repo compromised and rotate everything
+
+---
+
 ## Common Debugging Checklist
 
 1. **Orders expiring 30s after placement** → check `expirationSeconds` in `grvt-exchange.service.ts`
