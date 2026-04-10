@@ -9,7 +9,7 @@ export default function SettingsPage() {
         </p>
         <div className="mt-4 space-y-3 text-sm">
           <SettingRow label="Environment" value={process.env.GRVT_ENV ?? 'testnet'} />
-          <SettingRow label="Bot API URL" value={process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'} />
+          <SettingRow label="Bot API URL" value={process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4001'} />
         </div>
       </div>
     </div>
