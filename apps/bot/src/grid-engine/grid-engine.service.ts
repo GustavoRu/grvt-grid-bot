@@ -356,6 +356,106 @@ export class GridEngineService {
     }
   }
 
+  /**
+   * Update the price range (and optionally gridCount) of an active grid.
+   * Cancels all open orders, recalculates levels with the new config, and
+   * places a fresh window of orders. PnL history and trade count are preserved.
+   */
+  async updateGridRange(
+    gridId: string,
+    patch: { lowerPrice: number; upperPrice: number; gridCount?: number },
+  ): Promise<Grid> {
+    const active = this.activeGrids.get(gridId);
+    if (!active) throw new Error(`Grid ${gridId} is not active`);
+
+    const { lowerPrice, upperPrice, gridCount = active.grid.gridCount } = patch;
+
+    if (lowerPrice >= upperPrice) throw new Error('lowerPrice must be less than upperPrice');
+
+    // Validate capital-per-grid against min notional before touching exchange
+    const { minAmount, minNotional } = await this.exchange.getMarketLimits(active.grid.instrument);
+    const capitalPerGrid = (active.grid.investmentAmount * active.grid.leverage) / gridCount;
+    if (minNotional > 0 && capitalPerGrid < minNotional) {
+      const maxGrids = Math.floor((active.grid.investmentAmount * active.grid.leverage) / minNotional);
+      throw new Error(
+        `Investment too low: $${capitalPerGrid.toFixed(2)}/grid < $${minNotional} minimum. ` +
+        `Max grids with current investment: ${maxGrids}.`,
+      );
+    }
+
+    this.logger.log(`Updating range for grid ${gridId}: [${lowerPrice}–${upperPrice}] ${gridCount} grids`);
+
+    // Cancel all open orders on exchange
+    try {
+      await this.exchange.cancelAllOrders(active.grid.instrument);
+    } catch (err) {
+      this.logger.warn(`Failed to cancel orders for grid ${gridId} during range update`, err);
+    }
+
+    // Mark open DB orders as cancelled
+    await this.prisma.gridOrder.updateMany({
+      where: { gridId, status: { in: ['pending', 'open'] } },
+      data: { status: 'cancelled' },
+    });
+
+    // Persist new range config
+    const updatedGrid = await this.prisma.grid.update({
+      where: { id: gridId },
+      data: { lowerPrice, upperPrice, gridCount },
+    });
+
+    // Recalculate levels with new range
+    const newConfig: GridConfig = {
+      instrument: updatedGrid.instrument,
+      upperPrice,
+      lowerPrice,
+      gridCount,
+      gridType: updatedGrid.gridType as 'arithmetic' | 'geometric',
+      direction: updatedGrid.direction as 'long' | 'short' | 'neutral',
+      leverage: updatedGrid.leverage,
+      investmentAmount: updatedGrid.investmentAmount,
+      stopLoss: updatedGrid.stopLoss ?? undefined,
+      takeProfit: updatedGrid.takeProfit ?? undefined,
+    };
+    const levels = GridCalculator.calculateLevels(newConfig, minAmount, minNotional);
+
+    // Get current price and place fresh window
+    const ticker = await this.exchange.getTicker(updatedGrid.instrument);
+    const currentPrice = ticker.markPrice;
+    const { buyLevels, sellLevels } = GridCalculator.splitLevelsByPrice(levels, currentPrice);
+
+    const direction = updatedGrid.direction;
+    const slotsPerSide = Math.floor(MAX_OPEN_ORDERS / 2);
+    const activeBuys = direction !== 'short' ? buyLevels.slice(-MAX_OPEN_ORDERS) : [];
+    const activeSells = direction !== 'long' ? sellLevels.slice(0, MAX_OPEN_ORDERS) : [];
+    const finalBuys  = direction === 'neutral' ? activeBuys.slice(-slotsPerSide)   : activeBuys;
+    const finalSells = direction === 'neutral' ? activeSells.slice(0, slotsPerSide) : activeSells;
+
+    // Update in-memory state before placing orders
+    const orderMap = new Map<string, GridOrder>();
+    active.grid = updatedGrid;
+    active.levels = levels;
+    active.orderMap = orderMap;
+
+    await this.placeInitialOrders(updatedGrid, finalBuys, finalSells, orderMap);
+
+    const windowLow  = finalBuys[0]?.index  ?? (finalSells[0]?.index ?? 0);
+    const windowHigh = finalSells.at(-1)?.index ?? (finalBuys.at(-1)?.index ?? levels.length - 1);
+    active.windowLow  = windowLow;
+    active.windowHigh = windowHigh;
+    active.rebalancing = false;
+
+    // Reset drift warning for new range
+    this.driftWarnedGrids.delete(gridId);
+
+    this.logger.log(
+      `✅ Grid ${gridId} range updated → [${lowerPrice}–${upperPrice}] ${gridCount} grids, ` +
+      `${orderMap.size} orders placed (window: levels ${windowLow}–${windowHigh})`,
+    );
+
+    return updatedGrid;
+  }
+
   /** Stop and cancel all orders for a grid */
   async stopGrid(gridId: string): Promise<void> {
     const active = this.activeGrids.get(gridId);

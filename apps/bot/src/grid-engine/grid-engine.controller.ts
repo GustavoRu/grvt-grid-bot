@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param, Body, HttpCode, Query } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Param, Body, HttpCode, Query } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { GridEngineService } from './grid-engine.service';
 import type { GridConfig } from '@grvt-grid-bot/shared';
@@ -27,6 +27,17 @@ export class GridEngineController {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async createGrid(@Body() config: GridConfig): Promise<any> {
     return this.gridEngine.startGrid(config);
+  }
+
+  /** Update price range of an active grid — cancels and replaces all orders */
+  @Patch(':id/range')
+  @HttpCode(200)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async updateRange(
+    @Param('id') id: string,
+    @Body() body: { lowerPrice: number; upperPrice: number; gridCount?: number },
+  ): Promise<any> {
+    return this.gridEngine.updateGridRange(id, body);
   }
 
   /** Stop a grid and cancel all orders */

@@ -1,11 +1,13 @@
 'use client';
 
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import * as Tabs from '@radix-ui/react-tabs';
 import { api } from '@/lib/api';
 import { formatUsd, formatDate } from '@/lib/utils';
-import { ArrowLeft, Square, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { ArrowLeft, Square, SlidersHorizontal, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { EditRangeModal } from './edit-range-modal';
 import { StatsTab } from './stats-tab';
 import { OrdersTab } from './orders-tab';
 import { TradesTab } from './trades-tab';
@@ -46,6 +48,7 @@ interface Props {
 export function GridDetailPage({ id }: Props) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [showEditRange, setShowEditRange] = useState(false);
 
   const { data: grid, isLoading } = useQuery<Grid>({
     queryKey: ['grid', id],
@@ -99,14 +102,23 @@ export function GridDetailPage({ id }: Props) {
           </span>
         </div>
         {grid.status === 'active' && (
-          <button
-            onClick={() => stopMutation.mutate()}
-            disabled={stopMutation.isPending}
-            className="flex items-center gap-2 border border-red-500/50 text-red-400 hover:bg-red-500/10 px-3 py-1.5 rounded-md text-sm transition-colors disabled:opacity-50"
-          >
-            <Square className="h-3.5 w-3.5" />
-            Stop Grid
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowEditRange(true)}
+              className="flex items-center gap-2 border border-border text-muted-foreground hover:text-foreground hover:border-border/80 px-3 py-1.5 rounded-md text-sm transition-colors"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Adjust Range
+            </button>
+            <button
+              onClick={() => stopMutation.mutate()}
+              disabled={stopMutation.isPending}
+              className="flex items-center gap-2 border border-red-500/50 text-red-400 hover:bg-red-500/10 px-3 py-1.5 rounded-md text-sm transition-colors disabled:opacity-50"
+            >
+              <Square className="h-3.5 w-3.5" />
+              Stop Grid
+            </button>
+          </div>
         )}
       </div>
 
@@ -135,6 +147,17 @@ export function GridDetailPage({ id }: Props) {
           sub={`since ${formatDate(grid.createdAt)}`}
         />
       </div>
+
+      {showEditRange && (
+        <EditRangeModal
+          grid={grid}
+          onClose={() => setShowEditRange(false)}
+          onUpdated={() => {
+            setShowEditRange(false);
+            queryClient.invalidateQueries({ queryKey: ['grid', id] });
+          }}
+        />
+      )}
 
       {/* Tabs */}
       <Tabs.Root defaultValue="stats" className="space-y-4">

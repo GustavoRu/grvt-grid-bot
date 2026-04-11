@@ -29,6 +29,8 @@ export const api = {
     create: (config: GridConfig) =>
       request<Grid>('/grids', { method: 'POST', body: JSON.stringify(config) }),
     stop: (id: string) => request<{ success: boolean }>(`/grids/${id}/stop`, { method: 'POST' }),
+    updateRange: (id: string, body: { lowerPrice: number; upperPrice: number; gridCount?: number }) =>
+      request<Grid>(`/grids/${id}/range`, { method: 'PATCH', body: JSON.stringify(body) }),
     stats: (id: string) => request<GridStats>(`/grids/${id}/stats`),
     orders: (id: string, status?: string) =>
       request<GridOrder[]>(`/grids/${id}/orders${status ? `?status=${status}` : ''}`),
