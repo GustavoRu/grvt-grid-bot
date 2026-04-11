@@ -385,6 +385,28 @@ export class GridEngineService {
 
     this.logger.log(`Updating range for grid ${gridId}: [${lowerPrice}–${upperPrice}] ${gridCount} grids`);
 
+    // Detect filled buys that have no counter sell yet (orphaned fills).
+    // These happened between the last fill event and this range update — we need
+    // to place a sell for each one in the new range so positions are covered.
+    const filledBuysWithoutSell = await this.prisma.gridOrder.findMany({
+      where: { gridId, side: 'buy', status: 'filled' },
+    }).then(async (filledBuys: GridOrder[]) => {
+      const orphans: GridOrder[] = [];
+      for (const buy of filledBuys) {
+        const hasSell = await this.prisma.gridOrder.findFirst({
+          where: { gridId, side: 'sell', gridLevel: buy.gridLevel, status: { in: ['open', 'pending'] } },
+        });
+        if (!hasSell) orphans.push(buy);
+      }
+      return orphans;
+    });
+
+    if (filledBuysWithoutSell.length > 0) {
+      this.logger.log(
+        `Range update: ${filledBuysWithoutSell.length} filled buy(s) without counter sell — will place sells in new range`,
+      );
+    }
+
     // Cancel all open orders on exchange
     try {
       await this.exchange.cancelAllOrders(active.grid.instrument);
@@ -429,6 +451,9 @@ export class GridEngineService {
     const activeBuys = direction !== 'short' ? buyLevels.slice(-MAX_OPEN_ORDERS) : [];
     const activeSells = direction !== 'long' ? sellLevels.slice(0, MAX_OPEN_ORDERS) : [];
     const finalBuys  = direction === 'neutral' ? activeBuys.slice(-slotsPerSide)   : activeBuys;
+    // Reserve slots for orphan sells so total stays within MAX_OPEN_ORDERS
+    const orphanCount = Math.min(filledBuysWithoutSell.length, Math.floor(MAX_OPEN_ORDERS / 4));
+    const cappedBuys  = finalBuys.slice(-(MAX_OPEN_ORDERS - orphanCount));
     const finalSells = direction === 'neutral' ? activeSells.slice(0, slotsPerSide) : activeSells;
 
     // Update in-memory state before placing orders
@@ -437,7 +462,30 @@ export class GridEngineService {
     active.levels = levels;
     active.orderMap = orderMap;
 
-    await this.placeInitialOrders(updatedGrid, finalBuys, finalSells, orderMap);
+    await this.placeInitialOrders(updatedGrid, cappedBuys, finalSells, orderMap);
+
+    // Place sells for orphaned fills — use the nearest sell level above each fill price
+    for (const orphanBuy of filledBuysWithoutSell) {
+      const fillPrice = orphanBuy.filledPrice ?? orphanBuy.price;
+      // Find the nearest sell level above the fill price within the new range
+      const sellLevel = levels.find((l) => l.price > fillPrice && l.price <= upperPrice);
+      if (!sellLevel) {
+        this.logger.warn(`Range update: no sell level above ${fillPrice} in new range — skipping orphan sell`);
+        continue;
+      }
+      // Don't double-place if this level already has an open sell
+      const alreadyPlaced = [...orderMap.values()].some(
+        (o) => o.side === 'sell' && o.gridLevel === sellLevel.index,
+      );
+      if (alreadyPlaced) continue;
+
+      this.logger.log(`Range update: placing orphan sell @ ${sellLevel.price} (fill was @ ${fillPrice})`);
+      await this.placeCounterOrder(
+        { ...active, grid: updatedGrid, levels, orderMap },
+        orphanBuy,
+        'sell',
+      );
+    }
 
     const windowLow  = finalBuys[0]?.index  ?? (finalSells[0]?.index ?? 0);
     const windowHigh = finalSells.at(-1)?.index ?? (finalBuys.at(-1)?.index ?? levels.length - 1);
