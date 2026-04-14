@@ -42,6 +42,9 @@ export class GrvtExchangeService implements OnModuleInit {
       this.exchange.setSandboxMode(true);
     }
 
+    // Temporary: log all HTTP traffic to diagnose order placement failures
+    this.exchange.verbose = true;
+
     // CCXT grvt quirk: requiredCredentials marks privateKey as required, but when
     // using apiKey auth the private key goes in `secret` for EIP-712 order signing.
     this.exchange.requiredCredentials.privateKey = false;
