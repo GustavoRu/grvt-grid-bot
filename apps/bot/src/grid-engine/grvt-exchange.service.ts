@@ -32,6 +32,9 @@ export class GrvtExchangeService implements OnModuleInit {
         // CCXT default is 30s — far too short for grid orders.
         // GRVT maximum signature expiry is 30 days (2,592,000 seconds).
         expirationSeconds: 2592000,
+        // Disable CCXT builder fee — signs orders without builder which is
+        // more compatible with testnet and avoids extra fee overhead.
+        builderFee: false,
       },
     });
 
@@ -125,7 +128,7 @@ export class GrvtExchangeService implements OnModuleInit {
     };
 
     this.logger.debug(
-      `Placing ${req.side} ${req.type} order: ${req.size} @ ${req.price} on ${req.instrument}`,
+      `Placing ${req.side} ${req.type} order: ${req.size} @ ${req.price} on ${req.instrument} [sub_account_id: ${this.exchange.options.accountId}]`,
     );
 
     const order = await this.exchange.createOrder(
