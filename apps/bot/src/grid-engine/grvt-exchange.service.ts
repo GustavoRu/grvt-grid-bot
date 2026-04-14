@@ -184,8 +184,10 @@ export class GrvtExchangeService implements OnModuleInit {
   async setLeverage(instrument: string, leverage: number): Promise<void> {
     const symbol = this.toSymbol(instrument);
     try {
-      // Pass type:'swap' explicitly — CCXT grvt otherwise may resolve the symbol as spot
-      await this.exchange.setLeverage(leverage, symbol, { type: 'swap' });
+      // Log the market object to diagnose why CCXT treats this as spot
+      const market = this.exchange.market(symbol);
+      this.logger.debug(`setLeverage market: id=${market?.id} type=${market?.type} linear=${market?.linear}`);
+      await this.exchange.setLeverage(leverage, symbol);
       this.logger.log(`Set leverage ${leverage}x for ${instrument}`);
     } catch (e: unknown) {
       this.logger.warn(`setLeverage failed for ${instrument}: ${e instanceof Error ? e.message : String(e)}`);
