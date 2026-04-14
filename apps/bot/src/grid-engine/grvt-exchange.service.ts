@@ -54,6 +54,18 @@ export class GrvtExchangeService implements OnModuleInit {
       this.logger.log(`Loaded ${Object.keys(markets).length} markets, ${swapSymbols.length} swaps/perps: ${swapSymbols.slice(0, 5).join(', ')}`);
       await this.exchange.initializeClient(); // authorizes the CCXT builder via EIP-712
       this.logger.log('GRVT builder authorization confirmed');
+
+      // Diagnostic: log account balance visible to CCXT
+      try {
+        const balance = await this.exchange.fetchBalance();
+        const usdt = balance?.USDT ?? balance?.total?.USDT;
+        this.logger.log(`CCXT fetchBalance → USDT free: ${balance?.free?.USDT ?? 'n/a'}, total: ${usdt ?? 'n/a'}`);
+        this.logger.log(`CCXT accountId in use: ${this.exchange.options.accountId}`);
+        this.logger.log(`CCXT builderFee enabled: ${this.exchange.options.builderFee}`);
+        this.logger.log(`CCXT approvedBuilderFee: ${this.exchange.options.approvedBuilderFee}`);
+      } catch (e) {
+        this.logger.warn(`fetchBalance diagnostic failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
     } catch (err) {
       this.logger.warn('Builder authorization failed — orders may be rejected', err);
     }
