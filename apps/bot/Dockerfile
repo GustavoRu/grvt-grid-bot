@@ -37,8 +37,8 @@ COPY --from=builder /app/apps/bot/prisma       ./apps/bot/prisma
 COPY --from=builder /app/apps/bot/package.json ./apps/bot/package.json
 COPY --from=builder /app/package.json          ./package.json
 
-# Generate Prisma client for linux-musl (alpine)
-RUN cd apps/bot && npx prisma generate
+# Generate Prisma client for linux-musl (alpine) using the project's own prisma version
+RUN node_modules/.bin/prisma generate --schema=apps/bot/prisma/schema.prisma
 
 ENV NODE_ENV=production
 EXPOSE 4001
