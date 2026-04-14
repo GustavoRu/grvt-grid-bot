@@ -180,6 +180,27 @@ export class GrvtExchangeService implements OnModuleInit {
     return positions.find((p) => p.symbol === symbol) ?? null;
   }
 
+  /** Close any open position for an instrument with a market reduceOnly order */
+  async closePosition(instrument: string): Promise<void> {
+    const position = await this.getPosition(instrument);
+    if (!position || !position.contracts || position.contracts === 0) {
+      this.logger.debug(`No open position to close for ${instrument}`);
+      return;
+    }
+
+    const size = Math.abs(position.contracts as number);
+    // If contracts > 0 → long position → close with market sell
+    // If contracts < 0 → short position → close with market buy
+    const side = (position.contracts as number) > 0 ? 'sell' : 'buy';
+    const symbol = this.toSymbol(instrument);
+
+    this.logger.log(`Closing ${side === 'sell' ? 'long' : 'short'} position of ${size} on ${instrument}`);
+    await this.exchange.createOrder(symbol, 'market', side, size, undefined, {
+      reduceOnly: true,
+      timeInForce: 'IOC',
+    });
+  }
+
   /** Set leverage for an instrument */
   async setLeverage(instrument: string, leverage: number): Promise<void> {
     try {

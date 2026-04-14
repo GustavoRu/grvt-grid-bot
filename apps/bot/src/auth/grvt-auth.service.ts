@@ -79,7 +79,6 @@ export class GrvtAuthService implements OnModuleInit {
 
       // Extract session cookie from Set-Cookie header
       const setCookie = response.headers.get('set-cookie') ?? '';
-      this.logger.debug(`Auth set-cookie header: "${setCookie}"`);
       const cookieMatch = setCookie.match(new RegExp(`${GRVT_SESSION_COOKIE}=([^;]+)`));
       if (!cookieMatch) {
         const body = await response.text().catch(() => '(unreadable)');

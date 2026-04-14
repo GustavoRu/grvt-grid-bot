@@ -530,6 +530,12 @@ export class GridEngineService {
       this.logger.warn(`Failed to cancel orders for grid ${gridId}`, err);
     }
 
+    try {
+      await this.exchange.closePosition(grid.instrument);
+    } catch (err) {
+      this.logger.warn(`Failed to close position for grid ${gridId}`, err);
+    }
+
     // Mark open DB orders as cancelled
     await this.prisma.gridOrder.updateMany({
       where: { gridId, status: { in: ['pending', 'open'] } },
