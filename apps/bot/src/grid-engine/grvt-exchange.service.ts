@@ -173,8 +173,10 @@ export class GrvtExchangeService implements OnModuleInit {
   /** Fetch current position for an instrument */
   async getPosition(instrument: string) {
     const symbol = this.toSymbol(instrument);
+    // fetchPositions() without symbol filter — CCXT grvt rejects per-symbol calls
+    // with "supports contract markets only" even for valid swap symbols.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const positions: any[] = await this.exchange.fetchPositions([symbol]);
+    const positions: any[] = await this.exchange.fetchPositions();
     return positions.find((p) => p.symbol === symbol) ?? null;
   }
 
