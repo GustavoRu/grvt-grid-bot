@@ -49,7 +49,9 @@ export class GrvtExchangeService implements OnModuleInit {
     // authorizes GRVT's order builder on behalf of the user. Without it, all orders
     // fail with code 7504 "Builder is not authorized". Call it explicitly here.
     try {
-      await this.exchange.loadMarkets();    // triggers signIn (API key auth)
+      const markets = await this.exchange.loadMarkets();    // triggers signIn (API key auth)
+      const swapSymbols = Object.keys(markets).filter((s) => markets[s].type === 'swap' || markets[s].linear);
+      this.logger.log(`Loaded ${Object.keys(markets).length} markets, ${swapSymbols.length} swaps/perps: ${swapSymbols.slice(0, 5).join(', ')}`);
       await this.exchange.initializeClient(); // authorizes the CCXT builder via EIP-712
       this.logger.log('GRVT builder authorization confirmed');
     } catch (err) {
