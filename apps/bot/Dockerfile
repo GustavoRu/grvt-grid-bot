@@ -19,26 +19,25 @@ COPY packages/shared/ ./packages/shared/
 COPY apps/bot/        ./apps/bot/
 
 RUN pnpm --filter @grvt-grid-bot/shared build
+
+# Generate Prisma client (linux-musl binary for alpine — stays in node_modules)
+RUN pnpm --filter bot exec prisma generate
+
 RUN pnpm --filter bot build
 
 
 # ─── Production image ────────────────────────────────────────────────────────
 FROM node:20-alpine AS production
 
-RUN npm install -g pnpm@10.33.0
-
 WORKDIR /app
 
-# Copy everything needed to run
+# Copy everything — node_modules already includes the generated .prisma binary
 COPY --from=builder /app/node_modules          ./node_modules
 COPY --from=builder /app/packages/shared       ./packages/shared
 COPY --from=builder /app/apps/bot/dist         ./apps/bot/dist
 COPY --from=builder /app/apps/bot/prisma       ./apps/bot/prisma
 COPY --from=builder /app/apps/bot/package.json ./apps/bot/package.json
 COPY --from=builder /app/package.json          ./package.json
-
-# Generate Prisma client for linux-musl (alpine) using the project's own prisma version
-RUN node_modules/.bin/prisma generate --schema=apps/bot/prisma/schema.prisma
 
 ENV NODE_ENV=production
 EXPOSE 4001
