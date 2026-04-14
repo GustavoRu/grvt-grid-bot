@@ -2,8 +2,6 @@
 #
 # Build context: monorepo root
 #   docker build -f apps/bot/Dockerfile -t grvt-bot .
-#
-# Local dev is unchanged — just run `pnpm dev` or `pnpm bot` from the repo root.
 
 # ─── Stage 1: Build ──────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
@@ -24,39 +22,40 @@ RUN pnpm install --frozen-lockfile
 COPY packages/shared/ ./packages/shared/
 COPY apps/bot/        ./apps/bot/
 
-# 1. Compile shared types library (bot imports from @grvt-grid-bot/shared)
+# 1. Compile shared types library
 RUN pnpm --filter @grvt-grid-bot/shared build
 
-# 2. Generate Prisma client
+# 2. Generate Prisma client (targets linux-musl for alpine)
 RUN pnpm --filter bot exec prisma generate
 
 # 3. Compile NestJS → dist/
 RUN pnpm --filter bot build
 
-# 4. Create a self-contained production layout (resolves workspace symlinks,
-#    installs only production deps, output goes to /standalone)
-RUN pnpm deploy --filter bot --prod /standalone --legacy
-
-# 5. Regenerate Prisma client inside standalone (pnpm deploy doesn't carry it over)
-RUN cp -r /app/apps/bot/prisma /standalone/prisma \
- && cd /standalone && node_modules/.bin/prisma generate
-
 
 # ─── Stage 2: Production image ───────────────────────────────────────────────
 FROM node:20-alpine AS production
 
+RUN npm install -g pnpm@10.33.0
+
 WORKDIR /app
 
-# Self-contained node_modules from pnpm deploy (includes @grvt-grid-bot/shared)
-COPY --from=builder /standalone ./
+# Copy workspace manifests for production install
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/shared/package.json ./packages/shared/package.json
+COPY apps/bot/package.json        ./apps/bot/package.json
 
-# Compiled app
-COPY --from=builder /app/apps/bot/dist ./dist
+# Install production deps only
+RUN pnpm install --frozen-lockfile --prod
 
-# Prisma schema + migrations (needed for `prisma migrate deploy` at startup)
-COPY --from=builder /app/apps/bot/prisma ./prisma
+# Copy compiled shared + bot
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/apps/bot/dist        ./apps/bot/dist
+COPY --from=builder /app/apps/bot/prisma      ./apps/bot/prisma
+
+# Regenerate Prisma client for production (uses linux-musl binary)
+RUN pnpm --filter bot exec prisma generate
 
 ENV NODE_ENV=production
 EXPOSE 4001
 
-CMD ["node", "dist/main"]
+CMD ["node", "apps/bot/dist/main"]
