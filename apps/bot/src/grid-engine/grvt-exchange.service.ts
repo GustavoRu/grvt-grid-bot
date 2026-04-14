@@ -56,6 +56,9 @@ export class GrvtExchangeService implements OnModuleInit {
     // fail with code 7504 "Builder is not authorized". Call it explicitly here.
     try {
       const markets = await this.exchange.loadMarkets();    // triggers signIn (API key auth)
+      // CCXT bug: ETH_USDT_SpotSwap and ETH_USDT_Perp both map to ETH/USDT:USDT symbol,
+      // and CCXT picks SpotSwap. We patch the markets table so ETH/USDT:USDT → ETH_USDT_Perp.
+      await this.patchMissingPerpMarkets();
       const swapSymbols = Object.keys(markets).filter((s) => markets[s].type === 'swap' || markets[s].linear);
       this.logger.log(`Loaded ${Object.keys(markets).length} markets, ${swapSymbols.length} swaps/perps: ${swapSymbols.slice(0, 5).join(', ')}`);
       await this.exchange.initializeClient(); // authorizes the CCXT builder via EIP-712
@@ -238,6 +241,78 @@ export class GrvtExchangeService implements OnModuleInit {
       this.logger.log(`Set leverage ${leverage}x for ${instrument}`);
     } catch (e: unknown) {
       this.logger.warn(`setLeverage failed for ${instrument}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /**
+   * CCXT bug workaround: ETH_USDT_Perp is missing from loadMarkets() on testnet because
+   * ETH_USDT_SpotSwap claims the same ETH/USDT:USDT symbol and wins the dedup.
+   * Fetch the correct instrument_hash directly from GRVT and inject a proper market entry
+   * so CCXT can sign orders with the right assetID.
+   */
+  private async patchMissingPerpMarkets(): Promise<void> {
+    const instrumentsToPatch = ['ETH_USDT_Perp'];
+    for (const instrument of instrumentsToPatch) {
+      const symbol = this.toSymbol(instrument);
+      // Check if CCXT already has the correct mapping
+      const existing = this.exchange.markets[symbol];
+      if (existing?.id === instrument) continue; // already correct
+
+      try {
+        // Fetch instrument info directly from GRVT market-data API
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const info = await (this.exchange as any).publicMarketPostFullV1Instrument({ instrument });
+        const result = info?.result ?? info;
+        if (!result?.instrument_hash) {
+          this.logger.warn(`patchMissingPerpMarkets: no instrument_hash for ${instrument}`);
+          continue;
+        }
+
+        const parts = instrument.split('_'); // ['ETH', 'USDT', 'Perp']
+        const base = parts[0];
+        const quote = parts[1];
+        const baseDecimals: number = result.base_decimals ?? 9;
+        const stepSize = Math.pow(10, -baseDecimals);
+
+        const patchedMarket = {
+          id: instrument,
+          symbol,
+          base,
+          quote,
+          settle: quote,
+          type: 'swap',
+          swap: true,
+          linear: true,
+          active: true,
+          precision: {
+            base: String(stepSize),
+            price: result.tick_size ?? '0.01',
+            amount: String(stepSize),
+          },
+          limits: {
+            amount: { min: parseFloat(result.min_size ?? '0.001'), max: undefined },
+            cost: { min: parseFloat(result.min_notional ?? '20'), max: undefined },
+          },
+          info: {
+            instrument,
+            instrument_hash: result.instrument_hash,
+            instrument_type: 'PERPETUAL',
+            base_decimals: baseDecimals,
+            tick_size: result.tick_size ?? '0.01',
+            min_size: result.min_size ?? '0.001',
+            min_notional: result.min_notional ?? '20',
+          },
+        };
+
+        this.exchange.markets[symbol] = patchedMarket;
+        // Also index by id so market(id) lookups work
+        this.exchange.markets[instrument] = patchedMarket;
+        this.exchange.marketsById = this.exchange.marketsById ?? {};
+        this.exchange.marketsById[instrument] = patchedMarket;
+        this.logger.log(`Patched market: ${instrument} → ${symbol} (hash: ${result.instrument_hash})`);
+      } catch (e: unknown) {
+        this.logger.warn(`patchMissingPerpMarkets failed for ${instrument}: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
   }
 
