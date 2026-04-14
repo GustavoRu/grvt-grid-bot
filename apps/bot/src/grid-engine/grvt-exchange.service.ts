@@ -69,6 +69,12 @@ export class GrvtExchangeService implements OnModuleInit {
         this.logger.log(`CCXT accountId in use: ${this.exchange.options.accountId}`);
         this.logger.log(`CCXT builderFee enabled: ${this.exchange.options.builderFee}`);
         this.logger.log(`CCXT approvedBuilderFee: ${this.exchange.options.approvedBuilderFee}`);
+        // The EIP-712 signer address MUST match a registered signer for the sub-account in GRVT.
+        // If this address is not registered, all createOrder calls fail with code 2085.
+        const signerAddress = this.exchange.ethGetAddressFromPrivateKey(
+          this.exchange.remove0xPrefix(privateKey)
+        );
+        this.logger.log(`EIP-712 signer address (from GRVT_PRIVATE_KEY): ${signerAddress}`);
       } catch (e) {
         this.logger.warn(`fetchBalance diagnostic failed: ${e instanceof Error ? e.message : String(e)}`);
       }
