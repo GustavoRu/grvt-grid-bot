@@ -3,7 +3,7 @@
 # Build context: monorepo root
 #   docker build -f apps/bot/Dockerfile -t grvt-bot .
 
-FROM node:20-alpine
+FROM node:20-slim
 
 RUN npm install -g pnpm@10.33.0
 
