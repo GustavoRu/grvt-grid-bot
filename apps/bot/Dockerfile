@@ -52,9 +52,6 @@ COPY --from=builder /app/apps/bot/dist ./dist
 # Prisma schema + migrations (needed for `prisma migrate deploy` at startup)
 COPY --from=builder /app/apps/bot/prisma ./prisma
 
-# Generated Prisma client binary (prisma generate output, not included in deploy)
-COPY --from=builder /app/apps/bot/node_modules/.prisma ./node_modules/.prisma
-
 ENV NODE_ENV=production
 EXPOSE 4001
 
