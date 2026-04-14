@@ -35,7 +35,7 @@ RUN pnpm --filter bot build
 
 # 4. Create a self-contained production layout (resolves workspace symlinks,
 #    installs only production deps, output goes to /standalone)
-RUN pnpm deploy --filter bot --prod /standalone
+RUN pnpm deploy --filter bot --prod /standalone --legacy
 
 
 # ─── Stage 2: Production image ───────────────────────────────────────────────
