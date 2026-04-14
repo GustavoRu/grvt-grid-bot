@@ -184,12 +184,12 @@ export class GrvtExchangeService implements OnModuleInit {
   async setLeverage(instrument: string, leverage: number): Promise<void> {
     const symbol = this.toSymbol(instrument);
     try {
-      await this.exchange.setLeverage(leverage, symbol);
+      // Pass type:'swap' explicitly — CCXT grvt otherwise may resolve the symbol as spot
+      await this.exchange.setLeverage(leverage, symbol, { type: 'swap' });
       this.logger.log(`Set leverage ${leverage}x for ${instrument}`);
     } catch (e: unknown) {
-      // GRVT returns 3007 "not applicable for spot" when the perp market isn't found in
-      // the loaded markets map. Leverage can be set manually in the exchange UI — non-fatal.
-      this.logger.warn(`setLeverage skipped for ${instrument}: ${e instanceof Error ? e.message : String(e)}`);
+      this.logger.warn(`setLeverage failed for ${instrument}: ${e instanceof Error ? e.message : String(e)}`);
+      // Non-fatal: leverage must be set manually in GRVT UI before placing orders
     }
   }
 
