@@ -182,16 +182,17 @@ export class GrvtExchangeService implements OnModuleInit {
 
   /** Set leverage for an instrument */
   async setLeverage(instrument: string, leverage: number): Promise<void> {
-    const symbol = this.toSymbol(instrument);
     try {
-      // Log the market object to diagnose why CCXT treats this as spot
-      const market = this.exchange.market(symbol);
-      this.logger.debug(`setLeverage market: id=${market?.id} type=${market?.type} linear=${market?.linear}`);
-      await this.exchange.setLeverage(leverage, symbol);
+      // Bypass CCXT's setLeverage — it resolves ETH/USDT:USDT → ETH_USDT_SpotSwap (wrong).
+      // Call the GRVT endpoint directly with the instrument name as-is (e.g. ETH_USDT_Perp).
+      await this.exchange.privateTradingPostFullV1SetInitialLeverage({
+        sub_account_id: this.exchange.options.accountId,
+        instrument,
+        leverage: String(leverage),
+      });
       this.logger.log(`Set leverage ${leverage}x for ${instrument}`);
     } catch (e: unknown) {
       this.logger.warn(`setLeverage failed for ${instrument}: ${e instanceof Error ? e.message : String(e)}`);
-      // Non-fatal: leverage must be set manually in GRVT UI before placing orders
     }
   }
 
