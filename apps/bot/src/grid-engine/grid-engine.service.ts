@@ -181,11 +181,22 @@ export class GridEngineService {
             const recentFill = recentFillsByKey.get(key);
             if (recentFill?.id) {
               const filledPrice = parseFloat(recentFill.average ?? recentFill.price ?? String(dbOrder.price));
-              await this.prisma.gridOrder.update({
-                where: { id: dbOrder.id },
-                data: { status: 'filled', filledAt: new Date(), filledPrice, grvtOrderId: recentFill.id as string },
-              });
-              this.logger.log(`Recovery: ${dbOrder.side}@${dbOrder.price} filled during downtime @ ${filledPrice}`);
+              try {
+                await this.prisma.gridOrder.update({
+                  where: { id: dbOrder.id },
+                  data: { status: 'filled', filledAt: new Date(), filledPrice, grvtOrderId: recentFill.id as string },
+                });
+                this.logger.log(`Recovery: ${dbOrder.side}@${dbOrder.price} filled during downtime @ ${filledPrice}`);
+              } catch (e: unknown) {
+                // grvtOrderId already claimed by another record — mark as cancelled to avoid blocking recovery
+                const isUniqueViolation = e instanceof Error && e.message.includes('Unique constraint');
+                if (isUniqueViolation) {
+                  this.logger.warn(`Recovery: ${dbOrder.side}@${dbOrder.price} fill ID already claimed — marking cancelled`);
+                  await this.prisma.gridOrder.update({ where: { id: dbOrder.id }, data: { status: 'cancelled' } });
+                } else {
+                  throw e;
+                }
+              }
             } else {
               await this.prisma.gridOrder.update({
                 where: { id: dbOrder.id },
