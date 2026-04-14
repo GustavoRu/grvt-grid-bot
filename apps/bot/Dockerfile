@@ -55,5 +55,4 @@ COPY --from=builder /app/apps/bot/prisma ./prisma
 ENV NODE_ENV=production
 EXPOSE 4001
 
-# On startup: apply any pending DB migrations, then launch the bot
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
+CMD ["node", "dist/main"]
