@@ -37,8 +37,9 @@ RUN pnpm --filter bot build
 #    installs only production deps, output goes to /standalone)
 RUN pnpm deploy --filter bot --prod /standalone --legacy
 
-# 5. Copy generated Prisma client into standalone (pnpm deploy excludes it)
-RUN cp -r /app/node_modules/.prisma /standalone/node_modules/.prisma
+# 5. Regenerate Prisma client inside standalone (pnpm deploy doesn't carry it over)
+RUN cp -r /app/apps/bot/prisma /standalone/prisma \
+ && cd /standalone && node_modules/.bin/prisma generate
 
 
 # ─── Stage 2: Production image ───────────────────────────────────────────────
