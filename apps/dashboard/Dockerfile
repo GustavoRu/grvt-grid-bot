@@ -37,7 +37,6 @@ WORKDIR /app
 
 COPY --from=builder /app/apps/dashboard/.next/standalone ./
 COPY --from=builder /app/apps/dashboard/.next/static     ./.next/static
-COPY --from=builder /app/apps/dashboard/public           ./public
 
 ENV NODE_ENV=production
 EXPOSE 3000
